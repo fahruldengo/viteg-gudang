@@ -46,7 +46,8 @@ const MAC_SEP = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i;
 
 /** Pecah satu baris tempelan menjadi [imei, sn, mac]; urutan kolom dideteksi otomatis. */
 function parseLine(line) {
-  const tok = line.split(/[\t,;|]+|\s+/).map(s => s.trim()).filter(Boolean);
+  // Copy dari Excel dipisah Tab -> pisah hanya di Tab (agar "3,57E+14" tetap utuh dan terdeteksi)
+  const tok = (line.includes('\t') ? line.split('\t') : line.split(/[,;|]+|\s+/)).map(s => s.trim()).filter(Boolean);
   if (!tok.length) return null;
   let imei = '', mac = '';
   const rest = [];
@@ -65,11 +66,67 @@ function loadScript(src) {
   return new Promise((ok, no) => { const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = no; document.head.appendChild(s); });
 }
 
+const XLSX_URL = 'https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js';
+async function loadXLSX() {
+  if (!window.XLSX) await loadScript(XLSX_URL);
+  return window.XLSX;
+}
+/** Nilai sel Excel -> teks; angka besar (IMEI) tanpa notasi ilmiah. */
+const cellText = v => typeof v === 'number' ? (Number.isInteger(v) ? v.toFixed(0) : String(v)) : String(v == null ? '' : v).trim();
+const isSci = s => /^\d([.,]\d+)?E\+\d+$/i.test(String(s).trim());
+
+/** Template Excel untuk barang masuk: kolom IMEI/SN/MAC berformat Teks. */
+async function downloadTemplateMasuk() {
+  try {
+    const X = await loadXLSX();
+    const ws = X.utils.aoa_to_sheet([['IMEI', 'SN', 'MAC']]);
+    const ROWS = 1000;
+    for (let r = 1; r <= ROWS; r++) for (let c = 0; c < 3; c++) ws[X.utils.encode_cell({ r, c })] = { t: 's', v: '', z: '@' };
+    ws['!ref'] = 'A1:C' + (ROWS + 1);
+    ws['!cols'] = [{ wch: 20 }, { wch: 22 }, { wch: 20 }];
+    const info = X.utils.aoa_to_sheet([
+      ['PETUNJUK PENGISIAN — isi data di sheet "Data", jangan ubah judul kolom'],
+      [''],
+      ['Kolom', 'Aturan', 'Contoh'],
+      ['IMEI', 'Wajib, 15 digit angka', '356789012345671'],
+      ['SN', 'Wajib, serial number perangkat', 'ZTEGC1234567'],
+      ['MAC', 'Wajib, 12 karakter hex; boleh pakai : atau - atau tanpa pemisah', 'AA:BB:CC:11:22:33'],
+      [''],
+      ['Kolom di sheet Data sudah berformat Teks supaya IMEI tidak berubah jadi 3,57E+14.'],
+      ['Satu baris = satu unit. Model/tipe dan cabang dipilih di aplikasi saat impor.']
+    ]);
+    info['!cols'] = [{ wch: 12 }, { wch: 60 }, { wch: 22 }];
+    const wb = X.utils.book_new();
+    X.utils.book_append_sheet(wb, ws, 'Data');
+    X.utils.book_append_sheet(wb, info, 'Petunjuk');
+    X.writeFile(wb, 'template-barang-masuk.xlsx');
+  } catch (e) { toast('Gagal membuat template. Periksa koneksi internet.', true); }
+}
+
+/** Baca file Excel/CSV -> [[imei, sn, mac], ...]. Kolom dicari dari judul; kalau tak ada judul, pakai urutan A-B-C. */
+async function readMasukFile(file) {
+  const X = await loadXLSX();
+  const wb = X.read(await file.arrayBuffer(), { type: 'array', raw: false, cellText: false });
+  const name = wb.SheetNames.includes('Data') ? 'Data' : wb.SheetNames[0];
+  const rows = X.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
+  let hi = rows.findIndex(r => r.some(c => /imei/i.test(String(c))));
+  let ci = { imei: 0, sn: 1, mac: 2 };
+  if (hi >= 0) {
+    const h = rows[hi].map(c => String(c).trim().toLowerCase());
+    const find = re => h.findIndex(c => re.test(c));
+    ci = { imei: find(/imei/), sn: find(/^(sn|s\/n|serial|no\.?\s*seri|nomor seri)/), mac: find(/mac/) };
+    if (ci.sn < 0 || ci.mac < 0) throw new Error('Judul kolom SN atau MAC tidak ditemukan. Gunakan template.');
+  }
+  return rows.slice(hi + 1)
+    .map(r => [cellText(r[ci.imei]), cellText(r[ci.sn]), cellText(r[ci.mac])])
+    .filter(r => r.some(Boolean));
+}
+
 /** Ekspor ke Excel (.xlsx); IMEI tetap teks. Cadangan: CSV. */
 async function exportExcel(nama, cols, rows) {
   const aoa = [cols.map(c => c[1])].concat(rows.map(r => cols.map(c => String(r[c[0]] == null ? '' : r[c[0]]))));
   try {
-    if (!window.XLSX) await loadScript('https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js');
+    await loadXLSX();
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws['!cols'] = cols.map(c => ({ wch: c[2] || 16 }));
     const wb = XLSX.utils.book_new();
@@ -248,7 +305,7 @@ async function pageMasuk(v) {
   </div>
   <div class="card">
     <h3>Daftar unit</h3>
-    <div class="tabs"><button data-t="scan" class="on">Scan satu per satu</button><button data-t="paste">Tempel massal</button></div>
+    <div class="tabs"><button data-t="scan" class="on">Scan satu per satu</button><button data-t="paste">Tempel massal</button><button data-t="file">Impor file Excel</button></div>
     <div id="tScan">
       <div class="row scan-row">
         <label>IMEI<input id="sImei" inputmode="numeric" placeholder="15 digit" autocomplete="off"></label>
@@ -259,8 +316,27 @@ async function pageMasuk(v) {
       <p class="hint">Tekan Enter di tiap kolom untuk pindah ke kolom berikutnya — cocok untuk scanner barcode.</p>
     </div>
     <div id="tPaste" class="hidden">
-      <textarea id="pText" placeholder="IMEI  SN  MAC — satu unit per baris.&#10;Bisa langsung tempel 3 kolom dari Excel."></textarea>
+      <div class="format-box">
+        <strong>Format:</strong> satu unit per baris, urutan <b>IMEI · SN · MAC</b>, dipisah Tab (hasil copy dari Excel), koma, titik koma, atau spasi.
+        <pre>356789012345671	ZTEGC1234567	AA:BB:CC:11:22:33
+356789012345672,ZTEGC1234568,AABBCC112234
+356789012345673;ZTEGC1234569;aa-bb-cc-11-22-35</pre>
+        Baris judul (IMEI, SN, MAC) otomatis dilewati. Kalau copy dari Excel, pastikan kolom IMEI berformat <b>Teks</b>,
+        bukan Angka, supaya tidak tersalin sebagai 3,57E+14.
+      </div>
+      <textarea id="pText" placeholder="Tempel di sini…"></textarea>
       <div class="row" style="margin-top:8px"><button class="btn" id="pAdd">Tambahkan ke daftar</button></div>
+    </div>
+    <div id="tFile" class="hidden">
+      <div class="format-box">
+        <strong>Langkah:</strong> 1) Unduh template · 2) Isi kolom IMEI, SN, MAC di sheet <b>Data</b> (satu baris = satu unit) ·
+        3) Simpan lalu pilih filenya di bawah. Model dan cabang dipilih di atas. File .xlsx, .xls, dan .csv juga bisa,
+        asalkan baris judulnya memuat kata IMEI, SN, dan MAC.
+      </div>
+      <div class="row">
+        <button class="btn" id="fTpl">⇩ Unduh template Excel</button>
+        <label class="btn primary file-btn">Pilih file Excel…<input type="file" id="fFile" accept=".xlsx,.xls,.csv" hidden></label>
+      </div>
     </div>
     <div id="mMsg" style="margin-top:14px"></div>
     <div class="table-wrap"><table>
@@ -278,7 +354,8 @@ async function pageMasuk(v) {
     list.forEach(x => ['i' + x.imei, 's' + x.sn, 'm' + x.mac].forEach(k => cnt[k] = (cnt[k] || 0) + 1));
     list.forEach(x => {
       const e = [];
-      if (x.imei.length !== 15) e.push('IMEI harus 15 digit');
+      if (x.sci) e.push('IMEI tersalin sebagai format ilmiah (E+14) — ubah kolom Excel ke Teks lalu salin ulang');
+      else if (x.imei.length !== 15) e.push('IMEI harus 15 digit');
       if (!x.sn) e.push('SN kosong');
       if (!x.mac) e.push('MAC tidak valid');
       if (x.imei && cnt['i' + x.imei] > 1) e.push('IMEI dobel');
@@ -301,14 +378,33 @@ async function pageMasuk(v) {
     $('#mErr').textContent = nErr ? `· ${nErr} bermasalah` : '';
   };
   const add = (imei, sn, mac) => {
-    list.push({ imei: normImei(imei), sn: normSn(sn), mac: normMac(mac), rawMac: mac || '' });
+    const sci = isSci(imei);
+    list.push({ imei: sci ? String(imei).trim() : normImei(imei), sn: normSn(sn), mac: normMac(mac), rawMac: mac || '', sci });
   };
 
   $$('.tabs button', v).forEach(b => b.onclick = () => {
     $$('.tabs button', v).forEach(x => x.classList.toggle('on', x === b));
     $('#tScan').classList.toggle('hidden', b.dataset.t !== 'scan');
     $('#tPaste').classList.toggle('hidden', b.dataset.t !== 'paste');
+    $('#tFile').classList.toggle('hidden', b.dataset.t !== 'file');
   });
+
+  $('#fTpl').onclick = downloadTemplateMasuk;
+  $('#fFile').onchange = async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const rows = await readMasukFile(file);
+      if (!rows.length) { toast('File tidak berisi data', true); return; }
+      rows.forEach(r => add(r[0], r[1], r[2]));
+      render();
+      const nErr = list.filter(x => x.err).length;
+      toast(`${rows.length} unit dibaca dari ${file.name}` + (nErr ? ` · ${nErr} bermasalah` : ''), nErr > 0);
+    } catch (err) {
+      $('#mMsg').innerHTML = errBox({ message: 'Gagal membaca file: ' + err.message });
+    }
+  };
 
   const addScan = () => {
     const i = $('#sImei').value, s = $('#sSn').value, m = $('#sMac').value;
