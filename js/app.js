@@ -1,7 +1,7 @@
 /* ============================================================
    VITEG Gudang — aplikasi frontend
    ============================================================ */
-const App = { user: null, cabang: [], models: [] };
+const App = { user: null, cabang: [], models: [], sales: [], pelanggan: [] };
 const CHUNK_MASUK = 25;   // batas aman panjang URL GET
 const CHUNK_KELUAR = 50;
 
@@ -29,6 +29,14 @@ function errBox(e, extra = '') {
 }
 const okBox = m => `<div class="alert ok">${m}</div>`;
 const badge = s => `<span class="badge b-${esc(s)}">${esc(s)}</span>`;
+const kat = u => u.kategori === 'DEMO' ? 'DEMO' : 'JUAL';
+const salesNama = (id, dflt = '-') => { const x = App.sales.find(s => s.id === id); return x ? x.nama : (id || dflt); };
+const pelLabel = p => `${p.nama} · ${p.no_ktp}`;
+const mapsUrl = m => /^https?:\/\//i.test(m) ? m : 'https://www.google.com/maps?q=' + encodeURIComponent(m);
+function opsiSales(sel) {
+  return '<option value="">— pilih sales —</option>' + App.sales.filter(s => s.aktif === '1')
+    .map(s => `<option value="${esc(s.id)}" ${s.id === sel ? 'selected' : ''}>${esc(s.nama)}${isUtama() ? ' · ' + esc(s.cabang) : ''}</option>`).join('');
+}
 const cabNama = k => { const c = App.cabang.find(x => x.kode === k); return c ? c.nama : (k || '-'); };
 function opsiCabang(sel, semua, hanyaAktif = true) {
   let h = semua ? `<option value="">${esc(semua)}</option>` : '';
@@ -142,7 +150,7 @@ function modal(html) {
   const f = $('#modalCard input:not([disabled]), #modalCard select');
   if (f) f.focus();
 }
-function closeModal() { $('#modal').classList.add('hidden'); }
+function closeModal() { $('#modal').classList.add('hidden'); $('#modalCard').classList.remove('wide'); }
 
 /* ---------------- menu & router ---------------- */
 const MENU = [
@@ -155,6 +163,9 @@ const MENU = [
   { id: 'stok', label: 'Stok Unit', ic: '▤' },
   { id: 'riwayat', label: 'Riwayat Transaksi', ic: '☰' },
   { id: 'lacak', label: 'Lacak Unit', ic: '⌕' },
+  { g: 'Master Data' },
+  { id: 'pelanggan', label: 'Pelanggan', ic: '◉' },
+  { id: 'sales', label: 'Sales', ic: '★' },
   { g: 'Pengaturan' },
   { id: 'cabang', label: 'Cabang', ic: '⌂', utama: true },
   { id: 'pengguna', label: 'Pengguna', ic: '☺', utama: true },
@@ -176,6 +187,7 @@ async function route() {
   $$('#nav a').forEach(a => a.classList.toggle('active', a.dataset.id === id));
   $('#pageTitle').textContent = item.label;
   document.body.classList.remove('nav-open');
+  closeModal();
   const v = $('#view');
   v.innerHTML = loadingHtml();
   try { await PAGES[id](v); }
@@ -202,7 +214,7 @@ async function showApp() {
   $('#view').innerHTML = loadingHtml();
   try {
     const d = await API.call('init');
-    App.user = d.user; App.cabang = d.cabang; App.models = d.models;
+    App.user = d.user; App.cabang = d.cabang; App.models = d.models; App.sales = d.sales || [];
   } catch (e) {
     if (e.code === 'AUTH') { Auth.clear(); showLogin(); return; }
     $('#view').innerHTML = errBox(e);
@@ -257,9 +269,11 @@ async function pageDashboard(v) {
     <div class="stats">
       <div class="stat hi"><small>Stok di gudang</small><b>${fmt(d.stok)}</b></div>
       <div class="stat"><small>Masuk hari ini</small><b>${fmt(d.hariIni.MASUK)}</b></div>
-      <div class="stat"><small>Keluar hari ini</small><b>${fmt(d.hariIni.KELUAR)}</b></div>
+      <div class="stat"><small>Terjual hari ini</small><b>${fmt(d.hariIni.KELUAR)}</b></div>
       <div class="stat"><small>Retur hari ini</small><b>${fmt(d.hariIni.RETUR)}</b></div>
-      <div class="stat"><small>Total sudah keluar</small><b>${fmt(d.keluar)}</b></div>
+      <div class="stat"><small>Total terjual</small><b>${fmt(d.keluar)}</b></div>
+      <div class="stat demo"><small>Demo di gudang</small><b>${fmt(d.stokDemo)}</b></div>
+      <div class="stat demo"><small>Demo dibawa sales</small><b>${fmt(d.demoKeluar)}</b></div>
     </div>
     <div class="grid2" style="margin-bottom:18px">
       <div class="card"><h3>Stok per cabang</h3>${tbl(d.perCabang, 'Cabang', cabNama)}</div>
@@ -271,14 +285,14 @@ async function pageDashboard(v) {
 
 function trxTable(rows) {
   return `<div class="table-wrap"><table><thead><tr>
-    <th>Waktu</th><th>Jenis</th><th>IMEI</th><th>SN</th><th>Model</th><th>Cabang</th><th>Penerima</th><th>Referensi</th><th>Keterangan</th><th>Oleh</th>
+    <th>Waktu</th><th>Jenis</th><th>IMEI</th><th>SN</th><th>Model</th><th>Cabang</th><th>Pelanggan / penerima</th><th>Sales</th><th>Referensi</th><th>Keterangan</th><th>Oleh</th>
     </tr></thead><tbody>${rows.length ? rows.map(t => `<tr>
       <td class="mono">${esc(t.waktu)}</td><td>${badge(t.jenis)}</td>
       <td class="mono">${esc(t.imei)}</td><td class="mono">${esc(t.sn)}</td>
       <td>${esc(t.model)}</td>
       <td>${t.jenis === 'MUTASI' ? esc(t.cabang_asal) + ' → ' + esc(t.cabang) : esc(t.cabang)}</td>
-      <td>${esc(t.penerima)}</td><td>${esc(t.referensi)}</td><td>${esc(t.keterangan)}</td><td>${esc(t.oleh)}</td>
-    </tr>`).join('') : '<tr><td colspan="10" class="empty">Belum ada transaksi</td></tr>'}</tbody></table></div>`;
+      <td>${esc(t.penerima)}</td><td>${t.sales_id ? esc(salesNama(t.sales_id)) : ''}</td><td>${esc(t.referensi)}</td><td>${esc(t.keterangan)}</td><td>${esc(t.oleh)}</td>
+    </tr>`).join('') : '<tr><td colspan="11" class="empty">Belum ada transaksi</td></tr>'}</tbody></table></div>`;
 }
 
 /* ---------------- Barang Masuk ---------------- */
@@ -293,6 +307,7 @@ async function pageMasuk(v) {
         : `<label>Cabang<input value="${esc(cabNama(App.user.cabang))}" disabled></label>`}
       <label>Model / tipe<input id="mModel" list="dlModel" placeholder="mis. Modem FWA MyRepublic">
         <datalist id="dlModel">${App.models.map(m => `<option value="${esc(m)}">`).join('')}</datalist></label>
+      <label>Kategori<select id="mKat"><option value="JUAL">Barang jual</option><option value="DEMO">Barang demo (tidak dijual)</option></select></label>
       <label>No. referensi<input id="mRef" placeholder="No. DO / surat jalan"></label>
       <label>Keterangan<input id="mKet" placeholder="Opsional"></label>
     </div>
@@ -438,7 +453,7 @@ async function pageMasuk(v) {
     if (list.some(x => x.err)) { toast('Perbaiki baris yang bermasalah dulu', true); return; }
     const base = {
       cabang: isUtama() ? $('#mCab').value : App.user.cabang,
-      model, referensi: $('#mRef').value.trim(), keterangan: $('#mKet').value.trim()
+      model, kategori: $('#mKat').value, referensi: $('#mRef').value.trim(), keterangan: $('#mKet').value.trim()
     };
     const btn = $('#mSave');
     btn.disabled = true;
@@ -453,7 +468,7 @@ async function pageMasuk(v) {
         render();
       }
       if (!App.models.includes(model)) App.models.push(model);
-      msg.innerHTML = okBox(`<strong>Tersimpan.</strong> ${masuk} unit baru${retur ? `, ${retur} unit retur` : ''} masuk ke ${esc(cabNama(base.cabang))}.`);
+      msg.innerHTML = okBox(`<strong>Tersimpan.</strong> ${masuk} unit baru${base.kategori === 'DEMO' && masuk ? ' (barang demo)' : ''}${retur ? `, ${retur} unit retur` : ''} masuk ke ${esc(cabNama(base.cabang))}.`);
       toast('Barang masuk tersimpan');
       $('#mRef').value = $('#mKet').value = '';
     } catch (e) {
@@ -476,7 +491,12 @@ const pageKeluar = v => pagePilih(v, 'keluar');
 const pageMutasi = v => pagePilih(v, 'mutasi');
 
 async function pagePilih(v, mode) {
-  const stok = await API.call('stok', { status: 'GUDANG' });
+  const isK = mode === 'keluar';
+  const [stok, pelanggan] = await Promise.all([
+    API.call('stok', { status: 'GUDANG' }),
+    isK ? API.call('pelanggan') : Promise.resolve([])
+  ]);
+  App.pelanggan = pelanggan;
   const ix = { imei: {}, sn: {} };
   stok.forEach(u => { ix.imei[u.imei] = u; ix.sn[u.sn] = u; });
   const find = k => {
@@ -487,22 +507,36 @@ async function pagePilih(v, mode) {
     return ix.sn[normSn(k)] || null;
   };
   const list = [];
-  const isK = mode === 'keluar';
+  let tipe = 'JUAL';
+  let pelSel = null;
+  const nDemo = stok.filter(u => kat(u) === 'DEMO').length;
 
   v.innerHTML = `
+  ${isK ? `<div class="seg" id="kTipe">
+      <button data-v="JUAL" class="on">Penjualan<small>Barang jual → pelanggan</small></button>
+      <button data-v="DEMO">Barang demo<small>Dibawa sales, tidak dijual</small></button>
+    </div>` : ''}
   <div class="card">
     <h3>${isK ? 'Informasi pengeluaran' : 'Informasi mutasi'}</h3>
     <div class="form-grid">
-      ${isK
-        ? `<label>Penerima<input id="kPen" placeholder="Nama pelanggan / teknisi"></label>
-           <label>No. referensi<input id="kRef" placeholder="No. WO / order"></label>`
-        : `<label>Cabang tujuan<select id="kTuj">${opsiCabang('', '— pilih cabang —')}</select></label>
-           <label>No. referensi<input id="kRef" placeholder="No. surat jalan"></label>`}
+      ${isK ? `
+        <label id="lblPel"><span>Pelanggan <em id="pelOpt" class="muted hidden">(opsional)</em></span>
+          <div class="input-btn">
+            <input id="kPel" list="dlPel" placeholder="Cari nama / No. KTP" autocomplete="off">
+            <button class="btn" type="button" id="kPelNew" title="Tambah pelanggan baru">+ Baru</button>
+          </div>
+          <datalist id="dlPel"></datalist>
+          <small class="pel-info" id="kPelInfo"></small>
+        </label>
+        <label>Sales <span id="salesHint" class="muted"></span><select id="kSales">${opsiSales()}</select></label>
+        <label>No. referensi<input id="kRef" placeholder="No. WO / order"></label>`
+      : `<label>Cabang tujuan<select id="kTuj">${opsiCabang('', '— pilih cabang —')}</select></label>
+         <label>No. referensi<input id="kRef" placeholder="No. surat jalan"></label>`}
       <label>Keterangan<input id="kKet" placeholder="Opsional"></label>
     </div>
   </div>
   <div class="card">
-    <h3>Unit ${isK ? 'keluar' : 'dipindahkan'} <small class="muted">${fmt(stok.length)} unit tersedia di stok${isUtama() ? ' semua cabang' : ''}</small></h3>
+    <h3>Unit ${isK ? 'keluar' : 'dipindahkan'} <small class="muted" id="kAvail"></small></h3>
     <div class="tabs"><button data-t="scan" class="on">Scan</button><button data-t="paste">Tempel massal</button></div>
     <div id="tScan" class="row scan-row">
       <label>Scan IMEI / SN<input id="kScan" autocomplete="off" placeholder="Scan atau ketik lalu Enter"></label>
@@ -514,30 +548,71 @@ async function pagePilih(v, mode) {
     </div>
     <div id="kMsg" style="margin-top:14px"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>IMEI</th><th>SN</th><th>Model</th><th>Cabang</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>IMEI</th><th>SN</th><th>Model</th><th>Kategori</th><th>Cabang</th><th></th></tr></thead>
       <tbody id="kBody"></tbody></table></div>
     <div class="summary">
       <span><b id="kCount">0</b> unit dipilih</span>
       <div class="row"><button class="btn ghost" id="kClear">Kosongkan</button>
-        <button class="btn primary" id="kSave">${isK ? 'Simpan barang keluar' : 'Simpan mutasi'}</button></div>
+        <button class="btn primary" id="kSave"></button></div>
     </div>
   </div>`;
 
+  const saveLabel = () => isK ? (tipe === 'JUAL' ? 'Simpan penjualan' : 'Simpan barang demo keluar') : 'Simpan mutasi';
   const render = () => {
     $('#kBody').innerHTML = list.length ? list.map((u, i) => `<tr>
       <td>${i + 1}</td><td class="mono">${esc(u.imei)}</td><td class="mono">${esc(u.sn)}</td>
-      <td>${esc(u.model)}</td><td>${esc(cabNama(u.cabang))}</td>
+      <td>${esc(u.model)}</td><td>${badge(kat(u))}</td><td>${esc(cabNama(u.cabang))}</td>
       <td><button class="btn ghost sm" data-del="${i}">✕</button></td></tr>`).join('')
-      : '<tr><td colspan="6" class="empty">Belum ada unit dipilih.</td></tr>';
+      : '<tr><td colspan="7" class="empty">Belum ada unit dipilih.</td></tr>';
     $('#kCount').textContent = list.length;
+    $('#kSave').textContent = saveLabel();
+    const tersedia = isK ? (tipe === 'JUAL' ? stok.length - nDemo : nDemo) : stok.length;
+    $('#kAvail').textContent = `${fmt(tersedia)} unit ${isK ? (tipe === 'JUAL' ? 'barang jual' : 'barang demo') : ''} tersedia${isUtama() ? ' (semua cabang)' : ''}`;
   };
   const addKey = k => {
     const u = find(k);
     if (!u) return 'tidak ada di stok gudang';
     if (list.includes(u)) return 'sudah ada di daftar';
+    if (isK && tipe === 'JUAL' && kat(u) === 'DEMO') return 'barang DEMO tidak boleh dijual';
+    if (isK && tipe === 'DEMO' && kat(u) !== 'DEMO') return 'bukan barang demo';
     list.push(u);
     return '';
   };
+
+  if (isK) {
+    const fillPel = () => {
+      $('#dlPel').innerHTML = App.pelanggan.map(p => `<option value="${esc(pelLabel(p))}">`).join('');
+    };
+    const showPel = () => {
+      $('#kPelInfo').innerHTML = pelSel
+        ? `✓ ${esc(pelSel.id)} · ${esc(pelSel.alamat || 'alamat belum diisi')}${pelSel.maps ? ` · <a href="${esc(mapsUrl(pelSel.maps))}" target="_blank" rel="noopener">lokasi</a>` : ''}`
+        : '';
+    };
+    fillPel();
+    $('#kPel').oninput = () => {
+      const val = $('#kPel').value.trim();
+      pelSel = App.pelanggan.find(p => pelLabel(p) === val) ||
+        (/^\d{16}$/.test(val) ? App.pelanggan.find(p => p.no_ktp === val) : null) || null;
+      showPel();
+    };
+    $('#kPelNew').onclick = () => pelangganForm(null, p => {
+      App.pelanggan.push(p); fillPel();
+      pelSel = p; $('#kPel').value = pelLabel(p); showPel();
+    });
+    $$('#kTipe button').forEach(b => b.onclick = () => {
+      tipe = b.dataset.v;
+      $$('#kTipe button').forEach(x => x.classList.toggle('on', x === b));
+      $('#pelOpt').classList.toggle('hidden', tipe === 'JUAL');
+      $('#salesHint').textContent = tipe === 'DEMO' ? '(pemegang demo)' : '';
+      const before = list.length;
+      for (let i = list.length - 1; i >= 0; i--) if ((kat(list[i]) === 'DEMO') !== (tipe === 'DEMO')) list.splice(i, 1);
+      if (before !== list.length) toast(`${before - list.length} unit dikeluarkan dari daftar karena kategorinya tidak sesuai`);
+      render();
+    });
+    if (!App.sales.some(s => s.aktif === '1')) {
+      $('#kMsg').innerHTML = `<div class="alert bad">Belum ada data sales aktif. Tambahkan dulu di menu <a href="#sales">Sales</a>.</div>`;
+    }
+  }
 
   $$('.tabs button', v).forEach(b => b.onclick = () => {
     $$('.tabs button', v).forEach(x => x.classList.toggle('on', x === b));
@@ -576,8 +651,12 @@ async function pagePilih(v, mode) {
     if (!list.length) { toast('Belum ada unit dipilih', true); return; }
     const base = { referensi: $('#kRef').value.trim(), keterangan: $('#kKet').value.trim() };
     if (isK) {
-      base.penerima = $('#kPen').value.trim();
-      if (!base.penerima) { toast('Penerima wajib diisi', true); $('#kPen').focus(); return; }
+      base.tipe = tipe;
+      base.sales_id = $('#kSales').value;
+      if ($('#kPel').value.trim() && !pelSel) { toast('Pelanggan tidak dikenal — pilih dari daftar atau klik + Baru', true); $('#kPel').focus(); return; }
+      if (tipe === 'JUAL' && !pelSel) { toast('Pilih pelanggan', true); $('#kPel').focus(); return; }
+      if (!base.sales_id) { toast('Pilih sales', true); $('#kSales').focus(); return; }
+      base.pelanggan_id = pelSel ? pelSel.id : '';
     } else {
       base.tujuan = $('#kTuj').value;
       if (!base.tujuan) { toast('Pilih cabang tujuan', true); return; }
@@ -590,19 +669,21 @@ async function pagePilih(v, mode) {
         btn.textContent = `Menyimpan… (${list.length} tersisa)`;
         const chunk = list.slice(0, CHUNK_KELUAR);
         await API.call(mode, Object.assign({}, base, { keys: chunk.map(u => u.imei) }));
-        chunk.forEach(u => { delete ix.imei[u.imei]; delete ix.sn[u.sn]; });
+        chunk.forEach(u => { delete ix.imei[u.imei]; delete ix.sn[u.sn]; stok.splice(stok.indexOf(u), 1); });
         done += chunk.length;
         list.splice(0, chunk.length);
         render();
       }
-      msg.innerHTML = okBox(isK
-        ? `<strong>Tersimpan.</strong> ${done} unit keluar ke ${esc(base.penerima)}.`
-        : `<strong>Tersimpan.</strong> ${done} unit dipindahkan ke ${esc(cabNama(base.tujuan))}.`);
+      msg.innerHTML = okBox(!isK
+        ? `<strong>Tersimpan.</strong> ${done} unit dipindahkan ke ${esc(cabNama(base.tujuan))}.`
+        : tipe === 'JUAL'
+          ? `<strong>Penjualan tersimpan.</strong> ${done} unit ke ${esc(pelSel.nama)} · sales ${esc(salesNama(base.sales_id))}.`
+          : `<strong>Tersimpan.</strong> ${done} unit demo dibawa ${esc(salesNama(base.sales_id))}${pelSel ? ' untuk ' + esc(pelSel.nama) : ''}.`);
       toast('Transaksi tersimpan');
     } catch (e) {
       msg.innerHTML = errBox(e, done ? `<div>${done} unit sebelumnya sudah tersimpan.</div>` : '');
     } finally {
-      btn.disabled = false; btn.textContent = isK ? 'Simpan barang keluar' : 'Simpan mutasi';
+      btn.disabled = false; btn.textContent = saveLabel();
     }
   };
   render();
@@ -620,46 +701,50 @@ async function pageStok(v) {
     <div class="toolbar">
       ${isUtama() ? `<label>Cabang<select id="fCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
       <label>Status<select id="fSt"><option value="GUDANG">Di gudang</option><option value="KELUAR">Sudah keluar</option><option value="">Semua</option></select></label>
+      <label>Kategori<select id="fKat"><option value="">Semua</option><option value="JUAL">Barang jual</option><option value="DEMO">Barang demo</option></select></label>
       <label>Model<select id="fMod"><option value="">Semua model</option>${models.map(m => `<option>${esc(m)}</option>`).join('')}</select></label>
-      <label class="grow">Cari<input id="fQ" placeholder="IMEI, SN, penerima, referensi…"></label>
+      <label class="grow">Cari<input id="fQ" placeholder="IMEI, SN, pelanggan, sales, referensi…"></label>
       <button class="btn" id="fExp">Ekspor Excel</button>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>IMEI</th><th>SN</th><th>Model</th><th>Status</th><th>Cabang</th><th>Tgl masuk</th><th>Tgl keluar</th><th>Penerima</th><th>Referensi</th></tr></thead>
+      <thead><tr><th>IMEI</th><th>SN</th><th>Model</th><th>Kategori</th><th>Status</th><th>Cabang</th><th>Tgl masuk</th><th>Tgl keluar</th><th>Pelanggan / penerima</th><th>Sales</th><th>Referensi</th></tr></thead>
       <tbody id="sBody"></tbody></table></div>
     <div class="summary"><span id="sInfo"></span>
       <div class="row"><button class="btn sm" id="pPrev">‹ Sebelumnya</button><button class="btn sm" id="pNext">Berikutnya ›</button></div></div>
   </div>`;
 
+  all.forEach(u => { u.kategori = kat(u); u.sales = salesNama(u.sales_id, ''); });
   const apply = () => {
     const cab = isUtama() ? $('#fCab').value : '';
-    const st = $('#fSt').value, mod = $('#fMod').value, q = $('#fQ').value.trim().toUpperCase();
-    rows = all.filter(u => (!cab || u.cabang === cab) && (!st || u.status === st) && (!mod || u.model === mod) &&
-      (!q || [u.imei, u.sn, u.penerima, u.referensi].join(' ').toUpperCase().includes(q)));
+    const st = $('#fSt').value, kt = $('#fKat').value, mod = $('#fMod').value, q = $('#fQ').value.trim().toUpperCase();
+    rows = all.filter(u => (!cab || u.cabang === cab) && (!st || u.status === st) && (!kt || u.kategori === kt) &&
+      (!mod || u.model === mod) &&
+      (!q || [u.imei, u.sn, u.penerima, u.sales, u.referensi].join(' ').toUpperCase().includes(q)));
     page = 0; draw();
   };
   const draw = () => {
     const slice = rows.slice(page * PAGE, page * PAGE + PAGE);
     $('#sBody').innerHTML = slice.length ? slice.map(u => `<tr>
       <td class="mono"><a href="#lacak" data-q="${esc(u.imei)}">${esc(u.imei)}</a></td><td class="mono">${esc(u.sn)}</td>
-      <td>${esc(u.model)}</td><td>${badge(u.status)}</td><td>${esc(cabNama(u.cabang))}</td>
+      <td>${esc(u.model)}</td><td>${badge(u.kategori)}</td><td>${badge(u.status)}</td><td>${esc(cabNama(u.cabang))}</td>
       <td class="mono">${esc(u.tgl_masuk.slice(0, 16))}</td><td class="mono">${esc(u.tgl_keluar.slice(0, 16))}</td>
-      <td>${esc(u.penerima)}</td><td>${esc(u.referensi)}</td></tr>`).join('')
-      : '<tr><td colspan="9" class="empty">Tidak ada data</td></tr>';
+      <td>${esc(u.penerima)}</td><td>${esc(u.sales)}</td><td>${esc(u.referensi)}</td></tr>`).join('')
+      : '<tr><td colspan="11" class="empty">Tidak ada data</td></tr>';
     const from = rows.length ? page * PAGE + 1 : 0;
     $('#sInfo').innerHTML = `Menampilkan <b>${fmt(from)}–${fmt(Math.min(rows.length, (page + 1) * PAGE))}</b> dari <b>${fmt(rows.length)}</b> unit`;
     $('#pPrev').disabled = page === 0;
     $('#pNext').disabled = (page + 1) * PAGE >= rows.length;
   };
-  $$('#fCab, #fSt, #fMod', v).forEach(el => el.onchange = apply);
+  $$('#fCab, #fSt, #fKat, #fMod', v).forEach(el => el.onchange = apply);
   $('#fQ').oninput = apply;
   $('#pPrev').onclick = () => { page--; draw(); };
   $('#pNext').onclick = () => { page++; draw(); };
   $('#sBody').onclick = e => { const a = e.target.closest('[data-q]'); if (a) sessionStorage.setItem('vg_lacak', a.dataset.q); };
   $('#fExp').onclick = () => exportExcel('stok-' + today(), [
-    ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 24], ['status', 'Status', 10],
+    ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 24], ['kategori', 'Kategori', 9], ['status', 'Status', 10],
     ['cabang', 'Cabang', 10], ['tgl_masuk', 'Tgl Masuk', 19], ['tgl_keluar', 'Tgl Keluar', 19],
-    ['penerima', 'Penerima', 22], ['referensi', 'Referensi', 18], ['keterangan', 'Keterangan', 24]
+    ['pelanggan_id', 'ID Pelanggan', 12], ['penerima', 'Pelanggan / Penerima', 24], ['sales', 'Sales', 20],
+    ['referensi', 'Referensi', 18], ['keterangan', 'Keterangan', 24]
   ], rows);
   apply();
 }
@@ -673,9 +758,9 @@ async function pageRiwayat(v) {
       <label>Dari<input type="date" id="rDari" value="${daysAgo(30)}"></label>
       <label>Sampai<input type="date" id="rSampai" value="${today()}"></label>
       <button class="btn" id="rLoad">Tampilkan</button>
-      <label>Jenis<select id="rJenis"><option value="">Semua</option>${['MASUK', 'KELUAR', 'RETUR', 'MUTASI', 'HAPUS'].map(j => `<option>${j}</option>`).join('')}</select></label>
+      <label>Jenis<select id="rJenis"><option value="">Semua</option>${[['MASUK', 'Masuk'], ['KELUAR', 'Keluar (penjualan)'], ['DEMO', 'Keluar demo'], ['RETUR', 'Retur'], ['MUTASI', 'Mutasi'], ['KATEGORI', 'Ubah kategori'], ['HAPUS', 'Hapus']].map(j => `<option value="${j[0]}">${j[1]}</option>`).join('')}</select></label>
       ${isUtama() ? `<label>Cabang<select id="rCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
-      <label class="grow">Cari<input id="rQ" placeholder="IMEI, SN, penerima, referensi…"></label>
+      <label class="grow">Cari<input id="rQ" placeholder="IMEI, SN, pelanggan, sales, referensi…"></label>
       <button class="btn" id="rExp">Ekspor Excel</button>
     </div>
     <div id="rOut">${loadingHtml()}</div>
@@ -683,7 +768,7 @@ async function pageRiwayat(v) {
   const apply = () => {
     const j = $('#rJenis').value, cab = isUtama() ? $('#rCab').value : '', q = $('#rQ').value.trim().toUpperCase();
     rows = data.filter(t => (!j || t.jenis === j) && (!cab || t.cabang === cab || t.cabang_asal === cab) &&
-      (!q || [t.imei, t.sn, t.penerima, t.referensi, t.keterangan, t.oleh].join(' ').toUpperCase().includes(q)));
+      (!q || [t.imei, t.sn, t.penerima, salesNama(t.sales_id, ''), t.referensi, t.keterangan, t.oleh].join(' ').toUpperCase().includes(q)));
     const shown = rows.slice(0, 500);
     $('#rOut').innerHTML = trxTable(shown) +
       `<div class="summary"><span><b>${fmt(rows.length)}</b> transaksi${rows.length > 500 ? ' (500 teratas ditampilkan; ekspor untuk semua)' : ''}</span></div>`;
@@ -698,11 +783,12 @@ async function pageRiwayat(v) {
   $('#rLoad').onclick = load;
   $$('#rJenis, #rCab', v).forEach(el => el.onchange = apply);
   $('#rQ').oninput = () => data.length && apply();
-  $('#rExp').onclick = () => exportExcel(`riwayat-${$('#rDari').value}_${$('#rSampai').value}`, [
+  $('#rExp').onclick = () => { rows.forEach(t => { t.sales = salesNama(t.sales_id, ''); }); exportExcel(`riwayat-${$('#rDari').value}_${$('#rSampai').value}`, [
     ['id', 'ID Transaksi', 22], ['waktu', 'Waktu', 19], ['jenis', 'Jenis', 9], ['imei', 'IMEI', 18], ['sn', 'SN', 18],
     ['model', 'Model', 24], ['cabang_asal', 'Cabang Asal', 12], ['cabang', 'Cabang', 10],
-    ['penerima', 'Penerima', 22], ['referensi', 'Referensi', 18], ['keterangan', 'Keterangan', 24], ['oleh', 'Oleh', 12]
-  ], rows);
+    ['kategori', 'Kategori', 9], ['pelanggan_id', 'ID Pelanggan', 12], ['penerima', 'Pelanggan / Penerima', 24], ['sales', 'Sales', 20],
+    ['referensi', 'Referensi', 18], ['keterangan', 'Keterangan', 24], ['oleh', 'Oleh', 12]
+  ], rows); };
   load();
 }
 
@@ -724,25 +810,35 @@ async function pageLacak(v) {
       const r = await API.call('lacak', { q });
       const u = r.unit;
       $('#lOut').innerHTML = (u ? `
-        <div class="card"><h3>Unit ditemukan ${badge(u.status)}
-          ${isUtama() && u.status === 'GUDANG' ? `<button class="btn danger sm" id="lDel">Hapus (salah input)</button>` : ''}</h3>
+        <div class="card"><h3><span>Unit ditemukan ${badge(u.status)} ${badge(kat(u))}</span>
+          ${isUtama() && u.status === 'GUDANG' ? `<span class="row"><button class="btn sm" id="lKat">Ubah ke ${kat(u) === 'DEMO' ? 'barang jual' : 'barang demo'}</button><button class="btn danger sm" id="lDel">Hapus (salah input)</button></span>` : ''}</h3>
           <div class="unit-card">
             <div><small>IMEI</small><span class="mono">${esc(u.imei)}</span></div>
             <div><small>SN</small><span class="mono">${esc(u.sn)}</span></div>
             <div><small>Model</small>${esc(u.model)}</div>
             <div><small>Cabang</small>${esc(cabNama(u.cabang))}</div>
             <div><small>Tgl masuk</small>${esc(u.tgl_masuk)}</div>
-            ${u.status === 'KELUAR' ? `<div><small>Tgl keluar</small>${esc(u.tgl_keluar)}</div><div><small>Penerima</small>${esc(u.penerima)}</div>` : ''}
+            ${u.status === 'KELUAR' ? `<div><small>Tgl keluar</small>${esc(u.tgl_keluar)}</div>
+              <div><small>${r.pelanggan ? 'Pelanggan' : 'Penerima'}</small>${esc(u.penerima)}</div>
+              <div><small>Sales</small>${esc(salesNama(u.sales_id))}</div>` : ''}
             <div><small>Referensi</small>${esc(u.referensi || '-')}</div>
-          </div></div>`
+          </div>
+          ${r.pelanggan ? `<div class="pel-box">
+            <div><small>Pelanggan</small><strong>${esc(r.pelanggan.nama)}</strong> <span class="muted mono">${esc(r.pelanggan.id)}</span></div>
+            <div><small>No. KTP</small><span class="mono">${esc(r.pelanggan.no_ktp)}</span></div>
+            <div><small>Alamat</small>${esc(r.pelanggan.alamat || '-')}</div>
+            <div><small>Lokasi</small>${r.pelanggan.maps ? `<a href="${esc(mapsUrl(r.pelanggan.maps))}" target="_blank" rel="noopener">Buka di Google Maps ↗</a>` : '-'}</div>
+          </div>` : ''}</div>`
         : `<div class="alert bad">Unit tidak ditemukan di stok${r.riwayat.length ? ' (ada riwayat lama di bawah)' : ''}.</div>`) +
         (r.riwayat.length ? `<div class="card"><h3>Riwayat</h3><ul class="timeline">${r.riwayat.map(t => `
           <li><span class="mono">${esc(t.waktu)}</span><span>${badge(t.jenis)}</span>
           <span>${esc(t.jenis === 'MUTASI' ? cabNama(t.cabang_asal) + ' → ' + cabNama(t.cabang) : cabNama(t.cabang))}
-          ${t.penerima ? ' · ' + esc(t.penerima) : ''}${t.referensi ? ' · Ref ' + esc(t.referensi) : ''}${t.keterangan ? ' · ' + esc(t.keterangan) : ''}
+          ${t.penerima ? ' · ' + esc(t.penerima) : ''}${t.sales_id ? ' · Sales ' + esc(salesNama(t.sales_id)) : ''}${t.referensi ? ' · Ref ' + esc(t.referensi) : ''}${t.keterangan ? ' · ' + esc(t.keterangan) : ''}
           <small class="muted"> — ${esc(t.oleh)}</small></span></li>`).join('')}</ul></div>` : '');
       const del = $('#lDel');
       if (del) del.onclick = () => hapusUnit(u, go);
+      const kb = $('#lKat');
+      if (kb) kb.onclick = () => ubahKategori(u, go);
     } catch (e) { $('#lOut').innerHTML = errBox(e); }
   };
   $('#lQ').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); go(); } };
@@ -854,9 +950,169 @@ async function pagePassword(v) {
   };
 }
 
+/* ---------------- Pelanggan ---------------- */
+function pelangganForm(p, onSaved) {
+  const baru = !p;
+  p = p || { id: '', no_ktp: '', nama: '', alamat: '', maps: '', cabang: App.user.cabang };
+  modal(`<h3>${baru ? 'Tambah' : 'Ubah'} pelanggan</h3>
+    <label>No. KTP (NIK)<input id="pKtp" value="${esc(p.no_ktp)}" inputmode="numeric" placeholder="16 digit"></label>
+    <label>Nama lengkap<input id="pNama" value="${esc(p.nama)}"></label>
+    <label>Alamat<textarea id="pAlm" style="min-height:60px;font-family:inherit;font-size:14px">${esc(p.alamat)}</textarea></label>
+    <label>Lokasi maps<input id="pMaps" value="${esc(p.maps)}" placeholder="Link Google Maps atau 0.5435, 123.0568"></label>
+    <div class="row" style="margin-top:-6px">
+      <button class="btn sm" type="button" id="pGps">⌖ Pakai lokasi saya sekarang</button>
+      <small class="muted" id="pGpsInfo"></small>
+    </div>
+    ${isUtama() ? `<label>Cabang<select id="pCab">${opsiCabang(p.cabang)}</select></label>` : ''}
+    <p class="form-error" id="pErr"></p>
+    <div class="modal-actions"><button class="btn" id="pNo">Batal</button><button class="btn primary" id="pYes">Simpan</button></div>`);
+  $('#pKtp').oninput = e => { e.target.value = e.target.value.replace(/\D/g, '').slice(0, 16); };
+  $('#pGps').onclick = () => {
+    if (!navigator.geolocation) { $('#pGpsInfo').textContent = 'Perangkat tidak mendukung GPS'; return; }
+    $('#pGpsInfo').textContent = 'Mengambil lokasi…';
+    navigator.geolocation.getCurrentPosition(
+      pos => { $('#pMaps').value = pos.coords.latitude.toFixed(6) + ', ' + pos.coords.longitude.toFixed(6); $('#pGpsInfo').textContent = `Akurasi ±${Math.round(pos.coords.accuracy)} m`; },
+      err => { $('#pGpsInfo').textContent = 'Gagal: ' + err.message; },
+      { enableHighAccuracy: true, timeout: 15000 });
+  };
+  $('#pNo').onclick = closeModal;
+  $('#pYes').onclick = async () => {
+    const btn = $('#pYes');
+    btn.disabled = true;
+    try {
+      const saved = await API.call('simpanPelanggan', {
+        id: p.id, no_ktp: $('#pKtp').value, nama: $('#pNama').value, alamat: $('#pAlm').value,
+        maps: $('#pMaps').value, cabang: isUtama() ? $('#pCab').value : ''
+      });
+      closeModal(); toast('Pelanggan tersimpan');
+      onSaved(saved);
+    } catch (e) { $('#pErr').textContent = e.message; btn.disabled = false; }
+  };
+}
+
+async function pelangganDetail(id) {
+  modal(loadingHtml());
+  $('#modalCard').classList.add('wide');
+  try {
+    const r = await API.call('pelangganDetail', { id });
+    const p = r.pelanggan;
+    $('#modalCard').innerHTML = `
+      <h3>${esc(p.nama)} <small class="muted mono">${esc(p.id)}</small></h3>
+      <div class="unit-card">
+        <div><small>No. KTP</small><span class="mono">${esc(p.no_ktp)}</span></div>
+        <div><small>Cabang</small>${esc(cabNama(p.cabang))}</div>
+        <div style="grid-column:1/-1"><small>Alamat</small>${esc(p.alamat || '-')}</div>
+        <div style="grid-column:1/-1"><small>Lokasi</small>${p.maps ? `<a href="${esc(mapsUrl(p.maps))}" target="_blank" rel="noopener">${esc(p.maps)} ↗</a>` : '-'}</div>
+      </div>
+      <h3 style="margin:6px 0 0">Unit di pelanggan ini (${r.units.length})</h3>
+      <div class="table-wrap"><table><thead><tr><th>IMEI</th><th>SN</th><th>Model</th><th>Kategori</th><th>Tgl keluar</th><th>Sales</th></tr></thead>
+        <tbody>${r.units.length ? r.units.map(u => `<tr><td class="mono">${esc(u.imei)}</td><td class="mono">${esc(u.sn)}</td>
+          <td>${esc(u.model)}</td><td>${badge(kat(u))}</td><td class="mono">${esc(u.tgl_keluar.slice(0, 16))}</td><td>${esc(salesNama(u.sales_id))}</td></tr>`).join('')
+          : '<tr><td colspan="6" class="empty">Tidak ada unit</td></tr>'}</tbody></table></div>
+      ${r.riwayat.length ? `<details><summary class="muted" style="cursor:pointer">Riwayat transaksi (${r.riwayat.length})</summary>${trxTable(r.riwayat)}</details>` : ''}
+      <div class="modal-actions"><button class="btn" id="dClose">Tutup</button></div>`;
+    $('#dClose').onclick = closeModal;
+  } catch (e) { $('#modalCard').innerHTML = errBox(e) + '<div class="modal-actions"><button class="btn" onclick="closeModal()">Tutup</button></div>'; }
+}
+
+async function pagePelanggan(v) {
+  App.pelanggan = await API.call('pelanggan');
+  v.innerHTML = `<div class="card">
+    <div class="toolbar">
+      ${isUtama() ? `<label>Cabang<select id="plCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
+      <label class="grow">Cari<input id="plQ" placeholder="Nama, No. KTP, alamat, ID…"></label>
+      <button class="btn" id="plExp">Ekspor Excel</button>
+      <button class="btn primary" id="plNew">+ Tambah pelanggan</button>
+    </div>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Nama</th><th>No. KTP</th><th>Alamat</th><th>Lokasi</th><th>Cabang</th><th></th></tr></thead>
+      <tbody id="plBody"></tbody></table></div>
+    <div class="summary"><span id="plInfo"></span></div>
+  </div>`;
+  let rows = [];
+  const draw = () => {
+    const cab = isUtama() ? $('#plCab').value : '', q = $('#plQ').value.trim().toUpperCase();
+    rows = App.pelanggan.filter(p => (!cab || p.cabang === cab) &&
+      (!q || [p.id, p.nama, p.no_ktp, p.alamat].join(' ').toUpperCase().includes(q)));
+    const shown = rows.slice(0, 300);
+    $('#plBody').innerHTML = shown.length ? shown.map(p => `<tr>
+      <td class="mono">${esc(p.id)}</td><td><strong>${esc(p.nama)}</strong></td><td class="mono">${esc(p.no_ktp)}</td>
+      <td>${esc(p.alamat)}</td>
+      <td>${p.maps ? `<a href="${esc(mapsUrl(p.maps))}" target="_blank" rel="noopener">Buka maps ↗</a>` : '<span class="muted">-</span>'}</td>
+      <td>${esc(cabNama(p.cabang))}</td>
+      <td class="nowrap"><button class="btn sm" data-det="${esc(p.id)}">Unit</button> <button class="btn sm" data-edit="${esc(p.id)}">Ubah</button></td></tr>`).join('')
+      : '<tr><td colspan="7" class="empty">Belum ada pelanggan</td></tr>';
+    $('#plInfo').innerHTML = `<b>${fmt(rows.length)}</b> pelanggan${rows.length > 300 ? ' (300 pertama ditampilkan, gunakan pencarian)' : ''}`;
+  };
+  $('#plQ').oninput = draw;
+  if (isUtama()) $('#plCab').onchange = draw;
+  $('#plNew').onclick = () => pelangganForm(null, p => { App.pelanggan.push(p); draw(); });
+  $('#plBody').onclick = e => {
+    const d = e.target.closest('[data-det]'), ed = e.target.closest('[data-edit]');
+    if (d) pelangganDetail(d.dataset.det);
+    if (ed) {
+      const p = App.pelanggan.find(x => x.id === ed.dataset.edit);
+      pelangganForm(p, s => { Object.assign(p, s); draw(); });
+    }
+  };
+  $('#plExp').onclick = () => exportExcel('pelanggan-' + today(), [
+    ['id', 'ID', 11], ['nama', 'Nama', 26], ['no_ktp', 'No. KTP', 19], ['alamat', 'Alamat', 40],
+    ['maps', 'Lokasi', 30], ['cabang', 'Cabang', 10], ['dibuat', 'Dibuat', 19]
+  ], rows);
+  draw();
+}
+
+/* ---------------- Sales ---------------- */
+async function pageSales(v) {
+  App.sales = await API.call('sales');
+  v.innerHTML = `<div class="card"><h3>Daftar sales <button class="btn primary sm" id="slNew">+ Tambah sales</button></h3>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Nama</th><th>No. HP</th><th>Cabang</th><th>Status</th><th></th></tr></thead>
+    <tbody>${App.sales.length ? App.sales.map((s, i) => `<tr><td class="mono">${esc(s.id)}</td><td>${esc(s.nama)}</td>
+      <td class="mono">${esc(s.no_hp)}</td><td>${esc(cabNama(s.cabang))}</td>
+      <td>${s.aktif === '1' ? '<span class="badge b-on">AKTIF</span>' : '<span class="badge b-off">NONAKTIF</span>'}</td>
+      <td><button class="btn sm" data-i="${i}">Ubah</button></td></tr>`).join('')
+      : '<tr><td colspan="6" class="empty">Belum ada sales</td></tr>'}</tbody></table></div></div>`;
+  const form = s => {
+    const baru = !s;
+    s = s || { id: '', nama: '', no_hp: '', cabang: App.user.cabang, aktif: '1' };
+    modal(`<h3>${baru ? 'Tambah' : 'Ubah'} sales</h3>
+      <label>Nama<input id="sNama" value="${esc(s.nama)}"></label>
+      <label>No. HP<input id="sHp" value="${esc(s.no_hp)}" inputmode="tel" placeholder="08xx"></label>
+      ${isUtama() ? `<label>Cabang<select id="sCab">${opsiCabang(s.cabang)}</select></label>` : ''}
+      <label>Status<select id="sAkt"><option value="1">Aktif</option><option value="0" ${s.aktif === '0' ? 'selected' : ''}>Nonaktif</option></select></label>
+      <p class="form-error" id="sErr"></p>
+      <div class="modal-actions"><button class="btn" id="sNo">Batal</button><button class="btn primary" id="sYes">Simpan</button></div>`);
+    $('#sNo').onclick = closeModal;
+    $('#sYes').onclick = async () => {
+      try {
+        App.sales = await API.call('simpanSales', { id: s.id, nama: $('#sNama').value, no_hp: $('#sHp').value,
+          cabang: isUtama() ? $('#sCab').value : '', aktif: $('#sAkt').value });
+        closeModal(); toast('Sales tersimpan'); pageSales(v);
+      } catch (e) { $('#sErr').textContent = e.message; }
+    };
+  };
+  $('#slNew').onclick = () => form(null);
+  $$('[data-i]', v).forEach(b => b.onclick = () => form(App.sales[+b.dataset.i]));
+}
+
+function ubahKategori(u, after) {
+  const ke = kat(u) === 'DEMO' ? 'JUAL' : 'DEMO';
+  modal(`<h3>Ubah kategori ${esc(u.imei)}</h3>
+    <p style="margin:0">${badge(kat(u))} → ${badge(ke)}</p>
+    <label>Alasan<input id="kaAl" placeholder="${ke === 'JUAL' ? 'mis. masa demo selesai, dijual' : 'mis. dipakai untuk demo'}"></label>
+    <p class="form-error" id="kaErr"></p>
+    <div class="modal-actions"><button class="btn" id="kaNo">Batal</button><button class="btn primary" id="kaYes">Ubah ke ${ke}</button></div>`);
+  $('#kaNo').onclick = closeModal;
+  $('#kaYes').onclick = async () => {
+    try {
+      await API.call('ubahKategori', { keys: [u.imei], kategori: ke, alasan: $('#kaAl').value.trim() });
+      closeModal(); toast('Kategori diubah'); after();
+    } catch (e) { $('#kaErr').textContent = e.message; }
+  };
+}
+
 const PAGES = {
   dashboard: pageDashboard, masuk: pageMasuk, keluar: pageKeluar, mutasi: pageMutasi,
-  stok: pageStok, riwayat: pageRiwayat, lacak: pageLacak,
+  stok: pageStok, riwayat: pageRiwayat, lacak: pageLacak, pelanggan: pagePelanggan, sales: pageSales,
   cabang: pageCabang, pengguna: pagePengguna, password: pagePassword
 };
 

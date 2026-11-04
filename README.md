@@ -44,6 +44,9 @@ apps-script/
 |---|---|---|
 | Barang masuk | Ke cabang mana saja | Hanya ke cabangnya |
 | Barang keluar | Semua cabang | Hanya stok cabangnya |
+| Penjualan & barang demo keluar | Semua cabang | Hanya stok cabangnya |
+| Pelanggan & sales | Semua cabang | Hanya cabangnya |
+| Ubah kategori jual ↔ demo | ✓ | – |
 | Mutasi antar cabang | ✓ | – |
 | Stok, riwayat, dashboard | Semua cabang | Hanya cabangnya |
 | Lacak unit | ✓ | ✓ |
@@ -60,6 +63,15 @@ apps-script/
 - Semua kolom sheet berformat teks, jadi IMEI tidak berubah menjadi notasi ilmiah.
 - Unit bisa dicari dengan IMEI atau SN di halaman keluar, mutasi, dan lacak.
 
+## Penjualan, barang demo, pelanggan, sales
+- **Kategori barang** dipilih saat barang masuk: *Barang jual* atau *Barang demo*. Barang demo tidak bisa dijual.
+- **Barang keluar** punya dua jenis:
+  - *Penjualan*: hanya untuk barang jual, wajib memilih pelanggan dan sales.
+  - *Barang demo*: hanya untuk barang demo, wajib memilih sales pemegang demo; pelanggan opsional. Demo kembali ke gudang lewat Barang Masuk dan otomatis tercatat RETUR dengan kategori tetap DEMO.
+- **Pelanggan**: No. KTP (16 digit, unik), nama, alamat, lokasi (link Google Maps atau `latitude, longitude`; di HP bisa memakai tombol "Pakai lokasi saya"). Pelanggan baru bisa ditambahkan langsung dari halaman Barang Keluar.
+- **Lacak Unit** menampilkan pelanggan, alamat, lokasi, dan sales dari sebuah IMEI/SN. Tombol **Unit** di menu Pelanggan menampilkan semua IMEI yang ada di pelanggan tersebut.
+- Admin utama dapat mengubah kategori unit di gudang lewat Lacak Unit, misalnya demo selesai lalu dijual. Perubahan tercatat di riwayat.
+
 ## Update aplikasi
 - Perubahan frontend: timpa file di GitHub **kecuali `js/config.js`**.
-- Perubahan `Code.gs`: tempel kode baru, lalu **Terapkan → Kelola deployment → Edit → Versi: Baru**. Dengan cara ini URL tetap sama.
+- Perubahan `Code.gs`: tempel kode baru, **jalankan `setup()` sekali lagi** (aman: hanya menambah sheet dan kolom baru, data lama tidak berubah), lalu **Terapkan → Kelola deployment → Edit → Versi: Baru**. Dengan cara ini URL tetap sama.
