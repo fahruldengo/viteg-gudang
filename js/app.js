@@ -41,25 +41,20 @@ function opsiCabang(sel, semua, hanyaAktif = true) {
 /* normalisasi — sama dengan backend */
 const normImei = v => String(v || '').replace(/\D/g, '');
 const normSn = v => String(v || '').toUpperCase().replace(/\s+/g, '');
-const normMac = v => { const h = String(v || '').toUpperCase().replace(/[^0-9A-F]/g, ''); return h.length === 12 ? h.match(/../g).join(':') : ''; };
-const MAC_SEP = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i;
 
-/** Pecah satu baris tempelan menjadi [imei, sn, mac]; urutan kolom dideteksi otomatis. */
+/** Pecah satu baris tempelan menjadi [imei, sn]; IMEI (15 digit) dideteksi otomatis di kolom mana pun. */
 function parseLine(line) {
   // Copy dari Excel dipisah Tab -> pisah hanya di Tab (agar "3,57E+14" tetap utuh dan terdeteksi)
   const tok = (line.includes('\t') ? line.split('\t') : line.split(/[,;|]+|\s+/)).map(s => s.trim()).filter(Boolean);
   if (!tok.length) return null;
-  let imei = '', mac = '';
+  let imei = '';
   const rest = [];
   tok.forEach(t => {
     if (!imei && /^\d{15}$/.test(t)) imei = t;
-    else if (!mac && MAC_SEP.test(t)) mac = t;
     else rest.push(t);
   });
   if (!imei && rest.length) imei = rest.shift();
-  const sn = rest.shift() || '';
-  if (!mac && rest.length) mac = rest.shift();
-  return [imei, sn, mac];
+  return [imei, rest.shift() || ''];
 }
 
 function loadScript(src) {
@@ -75,22 +70,21 @@ async function loadXLSX() {
 const cellText = v => typeof v === 'number' ? (Number.isInteger(v) ? v.toFixed(0) : String(v)) : String(v == null ? '' : v).trim();
 const isSci = s => /^\d([.,]\d+)?E\+\d+$/i.test(String(s).trim());
 
-/** Template Excel untuk barang masuk: kolom IMEI/SN/MAC berformat Teks. */
+/** Template Excel untuk barang masuk: kolom IMEI/SN berformat Teks. */
 async function downloadTemplateMasuk() {
   try {
     const X = await loadXLSX();
-    const ws = X.utils.aoa_to_sheet([['IMEI', 'SN', 'MAC']]);
+    const ws = X.utils.aoa_to_sheet([['IMEI', 'SN']]);
     const ROWS = 1000;
-    for (let r = 1; r <= ROWS; r++) for (let c = 0; c < 3; c++) ws[X.utils.encode_cell({ r, c })] = { t: 's', v: '', z: '@' };
-    ws['!ref'] = 'A1:C' + (ROWS + 1);
-    ws['!cols'] = [{ wch: 20 }, { wch: 22 }, { wch: 20 }];
+    for (let r = 1; r <= ROWS; r++) for (let c = 0; c < 2; c++) ws[X.utils.encode_cell({ r, c })] = { t: 's', v: '', z: '@' };
+    ws['!ref'] = 'A1:B' + (ROWS + 1);
+    ws['!cols'] = [{ wch: 20 }, { wch: 24 }];
     const info = X.utils.aoa_to_sheet([
       ['PETUNJUK PENGISIAN — isi data di sheet "Data", jangan ubah judul kolom'],
       [''],
       ['Kolom', 'Aturan', 'Contoh'],
       ['IMEI', 'Wajib, 15 digit angka', '356789012345671'],
       ['SN', 'Wajib, serial number perangkat', 'ZTEGC1234567'],
-      ['MAC', 'Wajib, 12 karakter hex; boleh pakai : atau - atau tanpa pemisah', 'AA:BB:CC:11:22:33'],
       [''],
       ['Kolom di sheet Data sudah berformat Teks supaya IMEI tidak berubah jadi 3,57E+14.'],
       ['Satu baris = satu unit. Model/tipe dan cabang dipilih di aplikasi saat impor.']
@@ -103,22 +97,22 @@ async function downloadTemplateMasuk() {
   } catch (e) { toast('Gagal membuat template. Periksa koneksi internet.', true); }
 }
 
-/** Baca file Excel/CSV -> [[imei, sn, mac], ...]. Kolom dicari dari judul; kalau tak ada judul, pakai urutan A-B-C. */
+/** Baca file Excel/CSV -> [[imei, sn], ...]. Kolom dicari dari judul; kalau tak ada judul, pakai urutan A-B. */
 async function readMasukFile(file) {
   const X = await loadXLSX();
   const wb = X.read(await file.arrayBuffer(), { type: 'array', raw: false, cellText: false });
   const name = wb.SheetNames.includes('Data') ? 'Data' : wb.SheetNames[0];
   const rows = X.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: '' });
   let hi = rows.findIndex(r => r.some(c => /imei/i.test(String(c))));
-  let ci = { imei: 0, sn: 1, mac: 2 };
+  let ci = { imei: 0, sn: 1 };
   if (hi >= 0) {
     const h = rows[hi].map(c => String(c).trim().toLowerCase());
     const find = re => h.findIndex(c => re.test(c));
-    ci = { imei: find(/imei/), sn: find(/^(sn|s\/n|serial|no\.?\s*seri|nomor seri)/), mac: find(/mac/) };
-    if (ci.sn < 0 || ci.mac < 0) throw new Error('Judul kolom SN atau MAC tidak ditemukan. Gunakan template.');
+    ci = { imei: find(/imei/), sn: find(/^(sn|s\/n|serial|no\.?\s*seri|nomor seri)/) };
+    if (ci.sn < 0) throw new Error('Judul kolom SN tidak ditemukan. Gunakan template.');
   }
   return rows.slice(hi + 1)
-    .map(r => [cellText(r[ci.imei]), cellText(r[ci.sn]), cellText(r[ci.mac])])
+    .map(r => [cellText(r[ci.imei]), cellText(r[ci.sn])])
     .filter(r => r.some(Boolean));
 }
 
@@ -277,14 +271,14 @@ async function pageDashboard(v) {
 
 function trxTable(rows) {
   return `<div class="table-wrap"><table><thead><tr>
-    <th>Waktu</th><th>Jenis</th><th>IMEI</th><th>SN</th><th>MAC</th><th>Model</th><th>Cabang</th><th>Penerima</th><th>Referensi</th><th>Keterangan</th><th>Oleh</th>
+    <th>Waktu</th><th>Jenis</th><th>IMEI</th><th>SN</th><th>Model</th><th>Cabang</th><th>Penerima</th><th>Referensi</th><th>Keterangan</th><th>Oleh</th>
     </tr></thead><tbody>${rows.length ? rows.map(t => `<tr>
       <td class="mono">${esc(t.waktu)}</td><td>${badge(t.jenis)}</td>
-      <td class="mono">${esc(t.imei)}</td><td class="mono">${esc(t.sn)}</td><td class="mono">${esc(t.mac)}</td>
+      <td class="mono">${esc(t.imei)}</td><td class="mono">${esc(t.sn)}</td>
       <td>${esc(t.model)}</td>
       <td>${t.jenis === 'MUTASI' ? esc(t.cabang_asal) + ' → ' + esc(t.cabang) : esc(t.cabang)}</td>
       <td>${esc(t.penerima)}</td><td>${esc(t.referensi)}</td><td>${esc(t.keterangan)}</td><td>${esc(t.oleh)}</td>
-    </tr>`).join('') : '<tr><td colspan="11" class="empty">Belum ada transaksi</td></tr>'}</tbody></table></div>`;
+    </tr>`).join('') : '<tr><td colspan="10" class="empty">Belum ada transaksi</td></tr>'}</tbody></table></div>`;
 }
 
 /* ---------------- Barang Masuk ---------------- */
@@ -310,18 +304,17 @@ async function pageMasuk(v) {
       <div class="row scan-row">
         <label>IMEI<input id="sImei" inputmode="numeric" placeholder="15 digit" autocomplete="off"></label>
         <label>SN<input id="sSn" autocomplete="off"></label>
-        <label>MAC address<input id="sMac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off"></label>
         <button class="btn" id="sAdd">Tambah</button>
       </div>
-      <p class="hint">Tekan Enter di tiap kolom untuk pindah ke kolom berikutnya — cocok untuk scanner barcode.</p>
+      <p class="hint">Scan IMEI lalu Enter, scan SN lalu Enter — unit langsung masuk daftar. Cocok untuk scanner barcode.</p>
     </div>
     <div id="tPaste" class="hidden">
       <div class="format-box">
-        <strong>Format:</strong> satu unit per baris, urutan <b>IMEI · SN · MAC</b>, dipisah Tab (hasil copy dari Excel), koma, titik koma, atau spasi.
-        <pre>356789012345671	ZTEGC1234567	AA:BB:CC:11:22:33
-356789012345672,ZTEGC1234568,AABBCC112234
-356789012345673;ZTEGC1234569;aa-bb-cc-11-22-35</pre>
-        Baris judul (IMEI, SN, MAC) otomatis dilewati. Kalau copy dari Excel, pastikan kolom IMEI berformat <b>Teks</b>,
+        <strong>Format:</strong> satu unit per baris, urutan <b>IMEI · SN</b>, dipisah Tab (hasil copy dari Excel), koma, titik koma, atau spasi.
+        <pre>356789012345671	ZTEGC1234567
+356789012345672,ZTEGC1234568
+356789012345673;ZTEGC1234569</pre>
+        Baris judul (IMEI, SN) otomatis dilewati. Kalau copy dari Excel, pastikan kolom IMEI berformat <b>Teks</b>,
         bukan Angka, supaya tidak tersalin sebagai 3,57E+14.
       </div>
       <textarea id="pText" placeholder="Tempel di sini…"></textarea>
@@ -329,9 +322,9 @@ async function pageMasuk(v) {
     </div>
     <div id="tFile" class="hidden">
       <div class="format-box">
-        <strong>Langkah:</strong> 1) Unduh template · 2) Isi kolom IMEI, SN, MAC di sheet <b>Data</b> (satu baris = satu unit) ·
+        <strong>Langkah:</strong> 1) Unduh template · 2) Isi kolom IMEI dan SN di sheet <b>Data</b> (satu baris = satu unit) ·
         3) Simpan lalu pilih filenya di bawah. Model dan cabang dipilih di atas. File .xlsx, .xls, dan .csv juga bisa,
-        asalkan baris judulnya memuat kata IMEI, SN, dan MAC.
+        asalkan baris judulnya memuat kata IMEI dan SN.
       </div>
       <div class="row">
         <button class="btn" id="fTpl">⇩ Unduh template Excel</button>
@@ -340,7 +333,7 @@ async function pageMasuk(v) {
     </div>
     <div id="mMsg" style="margin-top:14px"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>IMEI</th><th>SN</th><th>MAC</th><th>Cek</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>IMEI</th><th>SN</th><th>Cek</th><th></th></tr></thead>
       <tbody id="mBody"></tbody></table></div>
     <div class="summary">
       <span><b id="mCount">0</b> unit dalam daftar <span id="mErr" style="color:var(--bad)"></span></span>
@@ -351,16 +344,14 @@ async function pageMasuk(v) {
 
   const check = () => {
     const cnt = {};
-    list.forEach(x => ['i' + x.imei, 's' + x.sn, 'm' + x.mac].forEach(k => cnt[k] = (cnt[k] || 0) + 1));
+    list.forEach(x => ['i' + x.imei, 's' + x.sn].forEach(k => cnt[k] = (cnt[k] || 0) + 1));
     list.forEach(x => {
       const e = [];
       if (x.sci) e.push('IMEI tersalin sebagai format ilmiah (E+14) — ubah kolom Excel ke Teks lalu salin ulang');
       else if (x.imei.length !== 15) e.push('IMEI harus 15 digit');
       if (!x.sn) e.push('SN kosong');
-      if (!x.mac) e.push('MAC tidak valid');
       if (x.imei && cnt['i' + x.imei] > 1) e.push('IMEI dobel');
       if (x.sn && cnt['s' + x.sn] > 1) e.push('SN dobel');
-      if (x.mac && cnt['m' + x.mac] > 1) e.push('MAC dobel');
       if (x.srv) e.push(x.srv);
       x.err = e.join(', ');
     });
@@ -369,17 +360,17 @@ async function pageMasuk(v) {
     check();
     $('#mBody').innerHTML = list.length ? list.map((x, i) => `
       <tr class="${x.err ? 'err' : ''}"><td>${i + 1}</td>
-        <td class="mono">${esc(x.imei)}</td><td class="mono">${esc(x.sn)}</td><td class="mono">${esc(x.mac || x.rawMac)}</td>
+        <td class="mono">${esc(x.imei)}</td><td class="mono">${esc(x.sn)}</td>
         <td>${x.err ? `<small style="color:var(--bad)">${esc(x.err)}</small>` : '<span class="badge b-on">OK</span>'}</td>
         <td><button class="btn ghost sm" data-del="${i}" title="Hapus">✕</button></td></tr>`).join('')
-      : '<tr><td colspan="6" class="empty">Belum ada unit. Scan atau tempel data di atas.</td></tr>';
+      : '<tr><td colspan="5" class="empty">Belum ada unit. Scan, tempel, atau impor data di atas.</td></tr>';
     const nErr = list.filter(x => x.err).length;
     $('#mCount').textContent = list.length;
     $('#mErr').textContent = nErr ? `· ${nErr} bermasalah` : '';
   };
-  const add = (imei, sn, mac) => {
+  const add = (imei, sn) => {
     const sci = isSci(imei);
-    list.push({ imei: sci ? String(imei).trim() : normImei(imei), sn: normSn(sn), mac: normMac(mac), rawMac: mac || '', sci });
+    list.push({ imei: sci ? String(imei).trim() : normImei(imei), sn: normSn(sn), sci });
   };
 
   $$('.tabs button', v).forEach(b => b.onclick = () => {
@@ -397,7 +388,7 @@ async function pageMasuk(v) {
     try {
       const rows = await readMasukFile(file);
       if (!rows.length) { toast('File tidak berisi data', true); return; }
-      rows.forEach(r => add(r[0], r[1], r[2]));
+      rows.forEach(r => add(r[0], r[1]));
       render();
       const nErr = list.filter(x => x.err).length;
       toast(`${rows.length} unit dibaca dari ${file.name}` + (nErr ? ` · ${nErr} bermasalah` : ''), nErr > 0);
@@ -407,16 +398,15 @@ async function pageMasuk(v) {
   };
 
   const addScan = () => {
-    const i = $('#sImei').value, s = $('#sSn').value, m = $('#sMac').value;
-    if (!i && !s && !m) return;
-    add(i, s, m);
-    $('#sImei').value = $('#sSn').value = $('#sMac').value = '';
+    const i = $('#sImei').value, s = $('#sSn').value;
+    if (!i && !s) return;
+    add(i, s);
+    $('#sImei').value = $('#sSn').value = '';
     render();
     $('#sImei').focus();
   };
   $('#sImei').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#sSn').focus(); } };
-  $('#sSn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); $('#sMac').focus(); } };
-  $('#sMac').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addScan(); } };
+  $('#sSn').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addScan(); } };
   $('#sAdd').onclick = addScan;
 
   $('#pAdd').onclick = () => {
@@ -425,7 +415,7 @@ async function pageMasuk(v) {
       const p = parseLine(line);
       if (!p) return;
       if (/^imei$/i.test(p[0])) return; // lewati baris judul
-      add(p[0], p[1], p[2]); n++;
+      add(p[0], p[1]); n++;
     });
     $('#pText').value = '';
     render();
@@ -457,7 +447,7 @@ async function pageMasuk(v) {
       while (list.length) {
         btn.textContent = `Menyimpan… (${list.length} tersisa)`;
         const chunk = list.slice(0, CHUNK_MASUK);
-        const r = await API.call('masuk', Object.assign({}, base, { items: chunk.map(x => [x.imei, x.sn, x.mac]) }));
+        const r = await API.call('masuk', Object.assign({}, base, { items: chunk.map(x => [x.imei, x.sn]) }));
         masuk += r.masuk; retur += r.retur;
         list.splice(0, chunk.length);
         render();
@@ -487,14 +477,14 @@ const pageMutasi = v => pagePilih(v, 'mutasi');
 
 async function pagePilih(v, mode) {
   const stok = await API.call('stok', { status: 'GUDANG' });
-  const ix = { imei: {}, sn: {}, mac: {} };
-  stok.forEach(u => { ix.imei[u.imei] = u; ix.sn[u.sn] = u; ix.mac[u.mac] = u; });
+  const ix = { imei: {}, sn: {} };
+  stok.forEach(u => { ix.imei[u.imei] = u; ix.sn[u.sn] = u; });
   const find = k => {
     k = String(k || '').trim();
     if (!k) return null;
     const d = normImei(k);
     if (d.length === 15 && /^[\d\s-]+$/.test(k) && ix.imei[d]) return ix.imei[d];
-    return ix.sn[normSn(k)] || ix.mac[normMac(k)] || null;
+    return ix.sn[normSn(k)] || null;
   };
   const list = [];
   const isK = mode === 'keluar';
@@ -515,16 +505,16 @@ async function pagePilih(v, mode) {
     <h3>Unit ${isK ? 'keluar' : 'dipindahkan'} <small class="muted">${fmt(stok.length)} unit tersedia di stok${isUtama() ? ' semua cabang' : ''}</small></h3>
     <div class="tabs"><button data-t="scan" class="on">Scan</button><button data-t="paste">Tempel massal</button></div>
     <div id="tScan" class="row scan-row">
-      <label>Scan IMEI / SN / MAC<input id="kScan" autocomplete="off" placeholder="Scan atau ketik lalu Enter"></label>
+      <label>Scan IMEI / SN<input id="kScan" autocomplete="off" placeholder="Scan atau ketik lalu Enter"></label>
       <button class="btn" id="kAdd">Tambah</button>
     </div>
     <div id="tPaste" class="hidden">
-      <textarea id="kText" placeholder="Satu IMEI / SN / MAC per baris"></textarea>
+      <textarea id="kText" placeholder="Satu IMEI atau SN per baris"></textarea>
       <div class="row" style="margin-top:8px"><button class="btn" id="kPaste">Tambahkan ke daftar</button></div>
     </div>
     <div id="kMsg" style="margin-top:14px"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>IMEI</th><th>SN</th><th>MAC</th><th>Model</th><th>Cabang</th><th></th></tr></thead>
+      <thead><tr><th>#</th><th>IMEI</th><th>SN</th><th>Model</th><th>Cabang</th><th></th></tr></thead>
       <tbody id="kBody"></tbody></table></div>
     <div class="summary">
       <span><b id="kCount">0</b> unit dipilih</span>
@@ -535,10 +525,10 @@ async function pagePilih(v, mode) {
 
   const render = () => {
     $('#kBody').innerHTML = list.length ? list.map((u, i) => `<tr>
-      <td>${i + 1}</td><td class="mono">${esc(u.imei)}</td><td class="mono">${esc(u.sn)}</td><td class="mono">${esc(u.mac)}</td>
+      <td>${i + 1}</td><td class="mono">${esc(u.imei)}</td><td class="mono">${esc(u.sn)}</td>
       <td>${esc(u.model)}</td><td>${esc(cabNama(u.cabang))}</td>
       <td><button class="btn ghost sm" data-del="${i}">✕</button></td></tr>`).join('')
-      : '<tr><td colspan="7" class="empty">Belum ada unit dipilih.</td></tr>';
+      : '<tr><td colspan="6" class="empty">Belum ada unit dipilih.</td></tr>';
     $('#kCount').textContent = list.length;
   };
   const addKey = k => {
@@ -600,7 +590,7 @@ async function pagePilih(v, mode) {
         btn.textContent = `Menyimpan… (${list.length} tersisa)`;
         const chunk = list.slice(0, CHUNK_KELUAR);
         await API.call(mode, Object.assign({}, base, { keys: chunk.map(u => u.imei) }));
-        chunk.forEach(u => { delete ix.imei[u.imei]; delete ix.sn[u.sn]; delete ix.mac[u.mac]; });
+        chunk.forEach(u => { delete ix.imei[u.imei]; delete ix.sn[u.sn]; });
         done += chunk.length;
         list.splice(0, chunk.length);
         render();
@@ -631,11 +621,11 @@ async function pageStok(v) {
       ${isUtama() ? `<label>Cabang<select id="fCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
       <label>Status<select id="fSt"><option value="GUDANG">Di gudang</option><option value="KELUAR">Sudah keluar</option><option value="">Semua</option></select></label>
       <label>Model<select id="fMod"><option value="">Semua model</option>${models.map(m => `<option>${esc(m)}</option>`).join('')}</select></label>
-      <label class="grow">Cari<input id="fQ" placeholder="IMEI, SN, MAC, penerima, referensi…"></label>
+      <label class="grow">Cari<input id="fQ" placeholder="IMEI, SN, penerima, referensi…"></label>
       <button class="btn" id="fExp">Ekspor Excel</button>
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>IMEI</th><th>SN</th><th>MAC</th><th>Model</th><th>Status</th><th>Cabang</th><th>Tgl masuk</th><th>Tgl keluar</th><th>Penerima</th><th>Referensi</th></tr></thead>
+      <thead><tr><th>IMEI</th><th>SN</th><th>Model</th><th>Status</th><th>Cabang</th><th>Tgl masuk</th><th>Tgl keluar</th><th>Penerima</th><th>Referensi</th></tr></thead>
       <tbody id="sBody"></tbody></table></div>
     <div class="summary"><span id="sInfo"></span>
       <div class="row"><button class="btn sm" id="pPrev">‹ Sebelumnya</button><button class="btn sm" id="pNext">Berikutnya ›</button></div></div>
@@ -645,17 +635,17 @@ async function pageStok(v) {
     const cab = isUtama() ? $('#fCab').value : '';
     const st = $('#fSt').value, mod = $('#fMod').value, q = $('#fQ').value.trim().toUpperCase();
     rows = all.filter(u => (!cab || u.cabang === cab) && (!st || u.status === st) && (!mod || u.model === mod) &&
-      (!q || [u.imei, u.sn, u.mac, u.mac.replace(/:/g, ''), u.penerima, u.referensi].join(' ').toUpperCase().includes(q)));
+      (!q || [u.imei, u.sn, u.penerima, u.referensi].join(' ').toUpperCase().includes(q)));
     page = 0; draw();
   };
   const draw = () => {
     const slice = rows.slice(page * PAGE, page * PAGE + PAGE);
     $('#sBody').innerHTML = slice.length ? slice.map(u => `<tr>
-      <td class="mono"><a href="#lacak" data-q="${esc(u.imei)}">${esc(u.imei)}</a></td><td class="mono">${esc(u.sn)}</td><td class="mono">${esc(u.mac)}</td>
+      <td class="mono"><a href="#lacak" data-q="${esc(u.imei)}">${esc(u.imei)}</a></td><td class="mono">${esc(u.sn)}</td>
       <td>${esc(u.model)}</td><td>${badge(u.status)}</td><td>${esc(cabNama(u.cabang))}</td>
       <td class="mono">${esc(u.tgl_masuk.slice(0, 16))}</td><td class="mono">${esc(u.tgl_keluar.slice(0, 16))}</td>
       <td>${esc(u.penerima)}</td><td>${esc(u.referensi)}</td></tr>`).join('')
-      : '<tr><td colspan="10" class="empty">Tidak ada data</td></tr>';
+      : '<tr><td colspan="9" class="empty">Tidak ada data</td></tr>';
     const from = rows.length ? page * PAGE + 1 : 0;
     $('#sInfo').innerHTML = `Menampilkan <b>${fmt(from)}–${fmt(Math.min(rows.length, (page + 1) * PAGE))}</b> dari <b>${fmt(rows.length)}</b> unit`;
     $('#pPrev').disabled = page === 0;
@@ -667,7 +657,7 @@ async function pageStok(v) {
   $('#pNext').onclick = () => { page++; draw(); };
   $('#sBody').onclick = e => { const a = e.target.closest('[data-q]'); if (a) sessionStorage.setItem('vg_lacak', a.dataset.q); };
   $('#fExp').onclick = () => exportExcel('stok-' + today(), [
-    ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['mac', 'MAC', 19], ['model', 'Model', 24], ['status', 'Status', 10],
+    ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 24], ['status', 'Status', 10],
     ['cabang', 'Cabang', 10], ['tgl_masuk', 'Tgl Masuk', 19], ['tgl_keluar', 'Tgl Keluar', 19],
     ['penerima', 'Penerima', 22], ['referensi', 'Referensi', 18], ['keterangan', 'Keterangan', 24]
   ], rows);
@@ -685,7 +675,7 @@ async function pageRiwayat(v) {
       <button class="btn" id="rLoad">Tampilkan</button>
       <label>Jenis<select id="rJenis"><option value="">Semua</option>${['MASUK', 'KELUAR', 'RETUR', 'MUTASI', 'HAPUS'].map(j => `<option>${j}</option>`).join('')}</select></label>
       ${isUtama() ? `<label>Cabang<select id="rCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
-      <label class="grow">Cari<input id="rQ" placeholder="IMEI, SN, MAC, penerima, referensi…"></label>
+      <label class="grow">Cari<input id="rQ" placeholder="IMEI, SN, penerima, referensi…"></label>
       <button class="btn" id="rExp">Ekspor Excel</button>
     </div>
     <div id="rOut">${loadingHtml()}</div>
@@ -693,7 +683,7 @@ async function pageRiwayat(v) {
   const apply = () => {
     const j = $('#rJenis').value, cab = isUtama() ? $('#rCab').value : '', q = $('#rQ').value.trim().toUpperCase();
     rows = data.filter(t => (!j || t.jenis === j) && (!cab || t.cabang === cab || t.cabang_asal === cab) &&
-      (!q || [t.imei, t.sn, t.mac, t.mac.replace(/:/g, ''), t.penerima, t.referensi, t.keterangan, t.oleh].join(' ').toUpperCase().includes(q)));
+      (!q || [t.imei, t.sn, t.penerima, t.referensi, t.keterangan, t.oleh].join(' ').toUpperCase().includes(q)));
     const shown = rows.slice(0, 500);
     $('#rOut').innerHTML = trxTable(shown) +
       `<div class="summary"><span><b>${fmt(rows.length)}</b> transaksi${rows.length > 500 ? ' (500 teratas ditampilkan; ekspor untuk semua)' : ''}</span></div>`;
@@ -710,7 +700,7 @@ async function pageRiwayat(v) {
   $('#rQ').oninput = () => data.length && apply();
   $('#rExp').onclick = () => exportExcel(`riwayat-${$('#rDari').value}_${$('#rSampai').value}`, [
     ['id', 'ID Transaksi', 22], ['waktu', 'Waktu', 19], ['jenis', 'Jenis', 9], ['imei', 'IMEI', 18], ['sn', 'SN', 18],
-    ['mac', 'MAC', 19], ['model', 'Model', 24], ['cabang_asal', 'Cabang Asal', 12], ['cabang', 'Cabang', 10],
+    ['model', 'Model', 24], ['cabang_asal', 'Cabang Asal', 12], ['cabang', 'Cabang', 10],
     ['penerima', 'Penerima', 22], ['referensi', 'Referensi', 18], ['keterangan', 'Keterangan', 24], ['oleh', 'Oleh', 12]
   ], rows);
   load();
@@ -721,7 +711,7 @@ async function pageLacak(v) {
   v.innerHTML = `
   <div class="card">
     <div class="row">
-      <label>IMEI / SN / MAC<input id="lQ" autocomplete="off" placeholder="Scan atau ketik lalu Enter"></label>
+      <label>IMEI / SN<input id="lQ" autocomplete="off" placeholder="Scan atau ketik lalu Enter"></label>
       <button class="btn primary" id="lGo">Lacak</button>
     </div>
   </div>
@@ -739,7 +729,6 @@ async function pageLacak(v) {
           <div class="unit-card">
             <div><small>IMEI</small><span class="mono">${esc(u.imei)}</span></div>
             <div><small>SN</small><span class="mono">${esc(u.sn)}</span></div>
-            <div><small>MAC</small><span class="mono">${esc(u.mac)}</span></div>
             <div><small>Model</small>${esc(u.model)}</div>
             <div><small>Cabang</small>${esc(cabNama(u.cabang))}</div>
             <div><small>Tgl masuk</small>${esc(u.tgl_masuk)}</div>

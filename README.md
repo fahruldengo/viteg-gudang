@@ -1,6 +1,6 @@
 # VITEG Gudang
 
-Sistem barang masuk/keluar modem FWA MyRepublic, dicatat per IMEI, SN, dan MAC address.
+Sistem barang masuk/keluar modem FWA MyRepublic, dicatat per IMEI dan SN.
 Frontend di GitHub Pages, backend Google Apps Script (GET saja), database Google Sheets.
 
 ## Struktur
@@ -51,13 +51,14 @@ apps-script/
 | Kelola cabang & pengguna | ✓ | – |
 
 ## Aturan data
-- **IMEI** wajib 15 digit. **SN** dan **MAC** wajib diisi. MAC boleh ditulis `aabbcc112233`, `AA-BB-CC-11-22-33`, atau `AA:BB:CC:11:22:33`; sistem menyimpannya sebagai `AA:BB:CC:11:22:33`.
-- IMEI, SN, dan MAC tidak boleh dipakai dua unit berbeda.
-- Unit berstatus KELUAR yang di-input masuk lagi dengan IMEI, SN, dan MAC yang sama otomatis dicatat sebagai **RETUR**.
+- **IMEI** wajib 15 digit dan **SN** wajib diisi. MAC address tidak dicatat karena sudah melekat pada IMEI. Kolom `mac` di Sheets tetap ada untuk data lama.
+- IMEI dan SN tidak boleh dipakai dua unit berbeda.
+- Unit berstatus KELUAR yang di-input masuk lagi dengan IMEI dan SN yang sama otomatis dicatat sebagai **RETUR**.
+- Input massal: tempel 2 kolom (IMEI, SN) dari Excel, atau unduh template Excel di halaman Barang Masuk lalu impor filenya.
 - Penyimpanan bersifat semua-atau-tidak: kalau ada satu unit bermasalah, tidak ada yang disimpan dan daftar errornya ditampilkan.
 - Data dikirim dalam paket 25 unit (masuk) dan 50 unit (keluar/mutasi) supaya URL GET tidak terlalu panjang.
 - Semua kolom sheet berformat teks, jadi IMEI tidak berubah menjadi notasi ilmiah.
-- Unit bisa dicari dengan IMEI, SN, atau MAC di halaman keluar, mutasi, dan lacak.
+- Unit bisa dicari dengan IMEI atau SN di halaman keluar, mutasi, dan lacak.
 
 ## Update aplikasi
 - Perubahan frontend: timpa file di GitHub **kecuali `js/config.js`**.
