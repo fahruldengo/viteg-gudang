@@ -124,6 +124,25 @@ async function readMasukFile(file) {
     .filter(r => r.some(Boolean));
 }
 
+/** Ekspor beberapa sheet sekaligus. sheets = [{ name, cols: [[key, judul, lebar]], rows, numeric }] */
+async function exportExcelMulti(nama, sheets) {
+  try {
+    const X = await loadXLSX();
+    const wb = X.utils.book_new();
+    sheets.forEach(sh => {
+      const aoa = [sh.cols.map(c => c[1])].concat(sh.rows.map(r => sh.cols.map(c => {
+        const val = r[c[0]];
+        if (sh.numeric && typeof val === 'number') return val;
+        return String(val == null ? '' : val);
+      })));
+      const ws = X.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = sh.cols.map(c => ({ wch: c[2] || 16 }));
+      X.utils.book_append_sheet(wb, ws, sh.name.slice(0, 31));
+    });
+    X.writeFile(wb, nama + '.xlsx');
+  } catch (e) { toast('Gagal ekspor Excel. Periksa koneksi internet.', true); }
+}
+
 /** Ekspor ke Excel (.xlsx); IMEI tetap teks. Cadangan: CSV. */
 async function exportExcel(nama, cols, rows) {
   const aoa = [cols.map(c => c[1])].concat(rows.map(r => cols.map(c => String(r[c[0]] == null ? '' : r[c[0]]))));
@@ -163,6 +182,10 @@ const MENU = [
   { id: 'stok', label: 'Stok Unit', ic: '▤' },
   { id: 'riwayat', label: 'Riwayat Transaksi', ic: '☰' },
   { id: 'lacak', label: 'Lacak Unit', ic: '⌕' },
+  { g: 'Stock Opname' },
+  { id: 'opname', label: 'Hitung Fisik', ic: '☑' },
+  { id: 'laporan', label: 'Laporan Bulanan', ic: '▥' },
+  { id: 'cocok', label: 'Cocokkan MyRepublic', ic: '⇆' },
   { g: 'Master Data' },
   { id: 'pelanggan', label: 'Pelanggan', ic: '◉' },
   { id: 'sales', label: 'Sales', ic: '★' },
@@ -1110,9 +1133,511 @@ function ubahKategori(u, after) {
   };
 }
 
+/* ============================================================
+   STOCK OPNAME
+   ============================================================ */
+const HASIL = {
+  COCOK: ['Cocok', 'b-on'],
+  HILANG: ['Tidak ditemukan fisik', 'b-HAPUS'],
+  TIDAK_TERDAFTAR: ['Tidak terdaftar di sistem', 'b-RETUR'],
+  CABANG_LAIN: ['Tercatat di cabang lain', 'b-MUTASI'],
+  SUDAH_KELUAR: ['Tercatat sudah keluar', 'b-KELUAR'],
+  DOBEL: ['Sudah discan', 'b-JUAL']
+};
+const hasilBadge = h => `<span class="badge ${(HASIL[h] || ['', 'b-JUAL'])[1]}">${esc((HASIL[h] || [h])[0])}</span>`;
+
+/* ---------------- Hitung fisik ---------------- */
+async function pageOpname(v) {
+  const list = await API.call('opnameList');
+  const draftOf = c => list.find(o => o.status === 'DRAFT' && o.cabang === c);
+  v.innerHTML = `
+  <div class="card">
+    <h3>Hitung fisik stok</h3>
+    <p class="muted" style="margin:-6px 0 14px">Scan semua unit yang ada secara fisik di gudang. Sistem membandingkannya dengan stok tercatat:
+      unit yang <b>tidak ditemukan</b>, unit yang <b>tidak terdaftar</b>, dan unit yang tercatat <b>sudah keluar</b> atau berada <b>di cabang lain</b>.
+      Opname tidak mengubah stok; selisih ditindaklanjuti lewat menu transaksi.</p>
+    <div class="row">
+      ${isUtama() ? `<label style="max-width:280px">Cabang<select id="oCab">${opsiCabang(App.user.cabang)}</select></label>` : ''}
+      <label>Catatan<input id="oCat" placeholder="mis. Opname akhir November 2026"></label>
+      <button class="btn primary" id="oStart"></button>
+    </div>
+  </div>
+  <div class="card"><h3>Riwayat opname</h3>
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Cabang</th><th>Mulai</th><th>Selesai</th><th>Status</th>
+      <th class="num">Stok sistem</th><th class="num">Cocok</th><th class="num">Tidak ditemukan</th><th class="num">Selisih lain</th><th></th></tr></thead>
+    <tbody>${list.length ? list.map(o => `<tr>
+      <td class="mono">${esc(o.id)}</td><td>${esc(cabNama(o.cabang))}</td><td class="mono">${esc(o.dibuat.slice(0, 16))}</td>
+      <td class="mono">${esc((o.selesai || '').slice(0, 16))}</td>
+      <td>${o.status === 'DRAFT' ? '<span class="badge b-RETUR">BERJALAN</span>' : '<span class="badge b-on">SELESAI</span>'}</td>
+      <td class="num">${o.status === 'DRAFT' ? '' : fmt(o.jml_sistem)}</td><td class="num">${o.status === 'DRAFT' ? '' : fmt(o.jml_cocok)}</td>
+      <td class="num">${o.status === 'DRAFT' ? '' : `<b style="color:${+o.jml_hilang ? 'var(--bad)' : 'inherit'}">${fmt(o.jml_hilang)}</b>`}</td>
+      <td class="num">${o.status === 'DRAFT' ? '' : fmt(o.jml_selisih)}</td>
+      <td><button class="btn sm" data-o="${esc(o.id)}">${o.status === 'DRAFT' ? 'Lanjutkan' : 'Lihat hasil'}</button></td></tr>`).join('')
+      : '<tr><td colspan="10" class="empty">Belum pernah opname</td></tr>'}</tbody></table></div></div>`;
+  const cab = () => isUtama() ? $('#oCab').value : App.user.cabang;
+  const label = () => { $('#oStart').textContent = draftOf(cab()) ? 'Lanjutkan opname berjalan' : 'Mulai opname'; };
+  if (isUtama()) $('#oCab').onchange = label;
+  label();
+  $('#oStart').onclick = async () => {
+    try {
+      const o = await API.call('opnameMulai', { cabang: cab(), catatan: $('#oCat').value.trim() });
+      opnameSesi(v, o.id);
+    } catch (e) { toast(e.message, true); }
+  };
+  $$('[data-o]', v).forEach(b => b.onclick = () => {
+    const o = list.find(x => x.id === b.dataset.o);
+    if (o.status === 'DRAFT') opnameSesi(v, o.id); else opnameHasil(v, o.id);
+  });
+}
+
+async function opnameSesi(v, id) {
+  v.innerHTML = loadingHtml('Menyiapkan opname…');
+  const [det, units] = await Promise.all([API.call('opnameDetail', { id }), API.call('stok', {})]);
+  const o = det.opname;
+  const ix = { imei: {}, sn: {} };
+  units.forEach(u => { ix.imei[u.imei] = u; ix.sn[u.sn] = u; });
+  const find = k => {
+    const d = normImei(k);
+    if (d.length === 15 && /^[\d\s-]+$/.test(k) && ix.imei[d]) return ix.imei[d];
+    return ix.sn[normSn(k)] || null;
+  };
+  const sistem = units.filter(u => u.status === 'GUDANG' && u.cabang === o.cabang);
+  const scanned = {};      // id (imei / SN mentah) -> { kunci, hasil, unit }
+  det.items.forEach(it => { scanned[it.imei || normSn(it.kunci)] = { kunci: it.kunci, hasil: it.hasil, unit: ix.imei[it.imei], ket: it.keterangan }; });
+  let pending = [], syncing = false, timer = null, tab = 'belum';
+
+  const evalKey = k => {
+    const x = find(k);
+    const key = x ? x.imei : normSn(k);
+    if (scanned[key]) return { key, hasil: 'DOBEL', unit: x };
+    let h, ket = '';
+    if (!x) h = 'TIDAK_TERDAFTAR';
+    else if (x.status !== 'GUDANG') { h = 'SUDAH_KELUAR'; ket = 'Sistem: keluar ' + x.tgl_keluar.slice(0, 10) + ' ke ' + x.penerima; }
+    else if (x.cabang !== o.cabang) { h = 'CABANG_LAIN'; ket = 'Sistem: stok ' + cabNama(x.cabang); }
+    else h = 'COCOK';
+    return { key, hasil: h, unit: x, ket };
+  };
+
+  v.innerHTML = `
+  <div class="card op-head">
+    <div><small class="muted">Opname berjalan · ${esc(o.id)}</small><h3 style="margin:2px 0 0">${esc(cabNama(o.cabang))}</h3>
+      <small class="muted">Dimulai ${esc(o.dibuat)} oleh ${esc(o.dibuat_oleh)}${o.catatan ? ' · ' + esc(o.catatan) : ''}</small></div>
+    <div class="row"><button class="btn ghost" id="oBack">‹ Kembali</button><button class="btn danger" id="oCancel">Batalkan</button>
+      <button class="btn primary" id="oDone">Selesaikan opname</button></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><small>Stok tercatat di sistem</small><b id="cSis">0</b></div>
+    <div class="stat hi"><small>Sudah discan &amp; cocok</small><b id="cCok">0</b></div>
+    <div class="stat"><small>Belum discan</small><b id="cBel">0</b></div>
+    <div class="stat"><small>Selisih (fisik ada, sistem beda)</small><b id="cSel" style="color:var(--bad)">0</b></div>
+  </div>
+  <div class="progress"><div id="oBar"></div></div>
+  <div class="card">
+    <div class="row scan-row">
+      <label>Scan IMEI / SN<input id="oScan" autocomplete="off" placeholder="Scan unit satu per satu, Enter"></label>
+      <button class="btn" id="oSync">Simpan progres</button>
+    </div>
+    <div id="oLast" class="last-scan"></div>
+    <p class="hint" id="oPend"></p>
+    <details style="margin-top:6px"><summary class="muted" style="cursor:pointer">Tempel banyak sekaligus</summary>
+      <textarea id="oText" placeholder="Satu IMEI atau SN per baris" style="margin-top:8px"></textarea>
+      <button class="btn" id="oPaste" style="margin-top:8px">Proses</button></details>
+  </div>
+  <div class="card">
+    <div class="tabs" id="oTabs"><button data-t="belum" class="on">Belum discan</button><button data-t="selisih">Selisih</button><button data-t="cocok">Cocok</button></div>
+    <div id="oList"></div>
+  </div>`;
+
+  const draw = () => {
+    const vals = Object.values(scanned);
+    const cocok = vals.filter(s => s.hasil === 'COCOK');
+    const selisih = vals.filter(s => s.hasil !== 'COCOK');
+    const belum = sistem.filter(u => !scanned[u.imei]);
+    $('#cSis').textContent = fmt(sistem.length);
+    $('#cCok').textContent = fmt(cocok.length);
+    $('#cBel').textContent = fmt(belum.length);
+    $('#cSel').textContent = fmt(selisih.length);
+    $('#oBar').style.width = (sistem.length ? Math.min(100, cocok.length / sistem.length * 100) : 0) + '%';
+    $$('#oTabs button').forEach(b => {
+      const n = { belum: belum.length, selisih: selisih.length, cocok: cocok.length }[b.dataset.t];
+      b.textContent = { belum: 'Belum discan', selisih: 'Selisih', cocok: 'Cocok' }[b.dataset.t] + ` (${n})`;
+    });
+    const unitRows = arr => arr.slice(0, 500).map(u => `<tr><td class="mono">${esc(u.imei)}</td><td class="mono">${esc(u.sn)}</td><td>${esc(u.model)}</td><td>${badge(kat(u))}</td></tr>`).join('');
+    if (tab === 'belum') {
+      $('#oList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>IMEI</th><th>SN</th><th>Model</th><th>Kategori</th></tr></thead>
+        <tbody>${belum.length ? unitRows(belum) : '<tr><td colspan="4" class="empty">Semua stok tercatat sudah discan 🎉</td></tr>'}</tbody></table></div>`;
+    } else {
+      const arr = tab === 'cocok' ? cocok : selisih;
+      $('#oList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Discan</th><th>IMEI</th><th>SN</th><th>Model</th><th>Hasil</th><th>Keterangan</th></tr></thead>
+        <tbody>${arr.length ? arr.slice().reverse().slice(0, 500).map(s => `<tr><td class="mono">${esc(s.kunci)}</td>
+          <td class="mono">${esc(s.unit ? s.unit.imei : '')}</td><td class="mono">${esc(s.unit ? s.unit.sn : '')}</td>
+          <td>${esc(s.unit ? s.unit.model : '')}</td><td>${hasilBadge(s.hasil)}</td><td>${esc(s.ket || '')}</td></tr>`).join('')
+          : '<tr><td colspan="6" class="empty">Kosong</td></tr>'}</tbody></table></div>`;
+    }
+    $('#oPend').textContent = pending.length ? `${pending.length} scan belum tersimpan ke server${syncing ? ' — menyimpan…' : ''}` : 'Semua scan tersimpan ✓';
+  };
+  const sync = async () => {
+    clearTimeout(timer);
+    if (syncing || !pending.length) return;
+    syncing = true; draw();
+    const batch = pending.slice(0, 100);
+    try {
+      const res = await API.call('opnameScan', { id, keys: batch });
+      pending = pending.slice(batch.length);
+      // hasil server adalah acuan (mis. unit cabang lain tidak terlihat oleh admin cabang)
+      res.hasil.forEach(h => {
+        if (h.hasil === 'DOBEL') return;
+        const ent = Object.values(scanned).find(s => s.kunci === h.kunci);
+        if (ent && ent.hasil !== h.hasil) { ent.hasil = h.hasil; ent.ket = ent.ket || (HASIL[h.hasil] || [''])[0]; }
+      });
+    } catch (e) { toast('Gagal menyimpan scan: ' + e.message, true); }
+    syncing = false; draw();
+    if (pending.length) timer = setTimeout(sync, 500);
+  };
+  const add = k => {
+    k = String(k || '').trim();
+    if (!k) return null;
+    const r = evalKey(k);
+    if (r.hasil !== 'DOBEL') {
+      scanned[r.key] = { kunci: k, hasil: r.hasil, unit: r.unit, ket: r.ket };
+      pending.push(k);
+    }
+    return r;
+  };
+  const showLast = (k, r) => {
+    const el = $('#oLast');
+    el.className = 'last-scan ' + (r.hasil === 'COCOK' ? 'ok' : r.hasil === 'DOBEL' ? 'dup' : 'bad');
+    el.innerHTML = `<b>${esc(k)}</b> ${hasilBadge(r.hasil)} ${r.unit ? esc(r.unit.model) : ''} ${r.ket ? '· ' + esc(r.ket) : ''}`;
+  };
+  $('#oScan').onkeydown = e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const k = $('#oScan').value.trim();
+    $('#oScan').value = '';
+    const r = add(k);
+    if (!r) return;
+    showLast(k, r);
+    draw();
+    clearTimeout(timer);
+    timer = setTimeout(sync, pending.length >= 25 ? 0 : 6000);
+  };
+  $('#oPaste').onclick = () => {
+    const lines = $('#oText').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    let n = 0;
+    lines.forEach(k => { const r = add(k); if (r && r.hasil !== 'DOBEL') n++; });
+    $('#oText').value = '';
+    toast(`${n} unit diproses`);
+    draw(); sync();
+  };
+  $('#oSync').onclick = sync;
+  $$('#oTabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; $$('#oTabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+  const guard = e => { if (pending.length) { e.preventDefault(); e.returnValue = ''; } };
+  window.addEventListener('beforeunload', guard);
+  const leave = () => { window.removeEventListener('beforeunload', guard); };
+  $('#oBack').onclick = async () => { await sync(); leave(); pageOpname(v); };
+  $('#oCancel').onclick = () => {
+    modal(`<h3>Batalkan opname?</h3><p class="muted" style="margin:0">Semua hasil scan opname ini akan diabaikan.</p>
+      <div class="modal-actions"><button class="btn" id="cNo">Tidak</button><button class="btn danger" id="cYes">Ya, batalkan</button></div>`);
+    $('#cNo').onclick = closeModal;
+    $('#cYes').onclick = async () => {
+      try { await API.call('opnameBatal', { id }); closeModal(); leave(); toast('Opname dibatalkan'); pageOpname(v); }
+      catch (e) { toast(e.message, true); }
+    };
+  };
+  $('#oDone').onclick = async () => {
+    await sync();
+    if (pending.length) { toast('Masih ada scan yang belum tersimpan, coba lagi', true); return; }
+    const belum = sistem.filter(u => !scanned[u.imei]).length;
+    modal(`<h3>Selesaikan opname?</h3>
+      <p style="margin:0">${belum ? `<b style="color:var(--bad)">${fmt(belum)} unit</b> tercatat di gudang tetapi belum discan dan akan dicatat sebagai <b>tidak ditemukan</b>.`
+        : 'Semua stok tercatat sudah discan.'}</p>
+      <p class="muted" style="margin:0">Setelah selesai, opname tidak bisa discan lagi.</p>
+      <div class="modal-actions"><button class="btn" id="cNo">Lanjut scan</button><button class="btn primary" id="cYes">Selesaikan</button></div>`);
+    $('#cNo').onclick = closeModal;
+    $('#cYes').onclick = async () => {
+      $('#cYes').disabled = true;
+      try { await API.call('opnameSelesai', { id }); closeModal(); leave(); toast('Opname selesai'); opnameHasil(v, id); }
+      catch (e) { toast(e.message, true); $('#cYes').disabled = false; }
+    };
+  };
+  draw();
+  $('#oScan').focus();
+}
+
+async function opnameHasil(v, id) {
+  v.innerHTML = loadingHtml();
+  const r = await API.call('opnameDetail', { id });
+  const o = r.opname, items = r.items;
+  const grp = h => items.filter(i => i.hasil === h);
+  const sel = items.filter(i => i.hasil !== 'COCOK' && i.hasil !== 'HILANG');
+  const tbl = (arr, kunci) => `<div class="table-wrap"><table><thead><tr>${kunci ? '<th>Discan</th>' : ''}<th>IMEI</th><th>SN</th><th>Model</th><th>Kategori</th><th>Hasil</th><th>Keterangan</th></tr></thead>
+    <tbody>${arr.length ? arr.map(i => `<tr>${kunci ? `<td class="mono">${esc(i.kunci)}</td>` : ''}<td class="mono">${esc(i.imei)}</td><td class="mono">${esc(i.sn)}</td>
+      <td>${esc(i.model)}</td><td>${i.kategori ? badge(i.kategori) : ''}</td><td>${hasilBadge(i.hasil)}</td><td>${esc(i.keterangan)}</td></tr>`).join('')
+      : `<tr><td colspan="${kunci ? 7 : 6}" class="empty">Tidak ada</td></tr>`}</tbody></table></div>`;
+  v.innerHTML = `
+  <div class="card op-head">
+    <div><small class="muted">Hasil opname · ${esc(o.id)}</small><h3 style="margin:2px 0 0">${esc(cabNama(o.cabang))}</h3>
+      <small class="muted">${esc(o.dibuat)} s/d ${esc(o.selesai)} · ${esc(o.selesai_oleh)}${o.catatan ? ' · ' + esc(o.catatan) : ''}</small></div>
+    <div class="row"><button class="btn ghost" id="hBack">‹ Kembali</button><button class="btn" id="hExp">Ekspor Excel</button></div>
+  </div>
+  <div class="stats">
+    <div class="stat"><small>Stok tercatat</small><b>${fmt(o.jml_sistem)}</b></div>
+    <div class="stat hi"><small>Cocok</small><b>${fmt(o.jml_cocok)}</b></div>
+    <div class="stat"><small>Tidak ditemukan fisik</small><b style="color:${+o.jml_hilang ? 'var(--bad)' : 'inherit'}">${fmt(o.jml_hilang)}</b></div>
+    <div class="stat"><small>Selisih lain</small><b>${fmt(o.jml_selisih)}</b></div>
+    <div class="stat"><small>Akurasi</small><b>${o.jml_sistem > 0 ? (o.jml_cocok / o.jml_sistem * 100).toFixed(1) + '%' : '-'}</b></div>
+  </div>
+  ${+o.jml_hilang || sel.length ? `<div class="alert bad"><b>Tindak lanjut:</b> unit <i>tidak ditemukan</i> dicari ulang atau dihapus dengan alasan
+    (Lacak Unit → Hapus). Unit <i>tidak terdaftar</i> diinput lewat Barang Masuk. Unit <i>sudah keluar</i> dicek transaksinya,
+    lalu diretur lewat Barang Masuk bila memang kembali. Unit <i>cabang lain</i> dirapikan lewat Mutasi.</div>`
+    : `<div class="alert ok"><b>Stok fisik sama persis dengan sistem.</b></div>`}
+  <div class="card"><h3>Tidak ditemukan fisik (${grp('HILANG').length})</h3>${tbl(grp('HILANG'))}</div>
+  <div class="card"><h3>Selisih: fisik ada, data sistem berbeda (${sel.length})</h3>${tbl(sel, true)}</div>
+  <div class="card"><details><summary style="cursor:pointer;font-weight:600">Cocok (${grp('COCOK').length})</summary><div style="margin-top:12px">${tbl(grp('COCOK'))}</div></details></div>`;
+  $('#hBack').onclick = () => pageOpname(v);
+  const cols = [['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 22], ['kategori', 'Kategori', 9], ['hasil_teks', 'Hasil', 26], ['keterangan', 'Keterangan', 40], ['kunci', 'Discan', 18]];
+  items.forEach(i => { i.hasil_teks = (HASIL[i.hasil] || [i.hasil])[0]; });
+  $('#hExp').onclick = () => exportExcelMulti(`opname-${o.cabang}-${o.dibuat.slice(0, 10)}`, [
+    { name: 'Ringkasan', cols: [['k', 'Keterangan', 28], ['v', 'Nilai', 30]], rows: [
+      { k: 'ID Opname', v: o.id }, { k: 'Cabang', v: cabNama(o.cabang) }, { k: 'Mulai', v: o.dibuat }, { k: 'Selesai', v: o.selesai },
+      { k: 'Petugas', v: o.selesai_oleh }, { k: 'Catatan', v: o.catatan }, { k: 'Stok tercatat', v: o.jml_sistem },
+      { k: 'Cocok', v: o.jml_cocok }, { k: 'Tidak ditemukan fisik', v: o.jml_hilang }, { k: 'Selisih lain', v: o.jml_selisih }] },
+    { name: 'Tidak Ditemukan', cols, rows: grp('HILANG') },
+    { name: 'Selisih', cols, rows: sel },
+    { name: 'Cocok', cols, rows: grp('COCOK') }
+  ]);
+}
+
+/* ---------------- Laporan bulanan ---------------- */
+async function pageLaporan(v) {
+  const bulanIni = today().slice(0, 7);
+  v.innerHTML = `
+  <div class="card">
+    <div class="toolbar">
+      <label>Bulan<input type="month" id="lpBln" value="${bulanIni}" max="${bulanIni}"></label>
+      ${isUtama() ? `<label>Cabang<select id="lpCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
+      <button class="btn primary" id="lpGo">Tampilkan</button>
+      <span class="spacer"></span>
+      <button class="btn" id="lpExp" disabled>Ekspor Excel</button>
+    </div>
+    <p class="hint" style="margin:0">Stok awal &amp; akhir dihitung ulang dari riwayat transaksi, jadi laporan bulan mana pun selalu bisa ditarik.
+      Gunakan file ekspor untuk pencocokan dengan logistik MyRepublic.</p>
+  </div>
+  <div id="lpOut"></div>`;
+  let data = null;
+  const NAMA_BLN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const blnTeks = b => NAMA_BLN[+b.slice(5, 7) - 1] + ' ' + b.slice(0, 4);
+  const COLS = [['awal', 'Stok awal'], ['masuk', 'Masuk'], ['retur', 'Retur'], ['mutasi_masuk', 'Mutasi masuk'],
+    ['terjual', 'Terjual'], ['demo_keluar', 'Demo keluar'], ['mutasi_keluar', 'Mutasi keluar'], ['hapus', 'Dihapus'],
+    ['ubah_kategori', 'Ubah kategori'], ['akhir', 'Stok akhir']];
+  const load = async () => {
+    $('#lpOut').innerHTML = loadingHtml('Menghitung laporan…');
+    try {
+      data = await API.call('laporanBulanan', { bulan: $('#lpBln').value, cabang: isUtama() ? $('#lpCab').value : '' });
+    } catch (e) { $('#lpOut').innerHTML = errBox(e); return; }
+    const R = data.ringkasan;
+    const tot = {};
+    COLS.forEach(c => { tot[c[0]] = R.reduce((s, r) => s + r[c[0]], 0); });
+    const sum = k => fmt(tot[k]);
+    const cell = (k, n) => `<td class="num${k === 'akhir' || k === 'awal' ? ' strong' : ''}">${n ? (k === 'ubah_kategori' && n > 0 ? '+' : '') + fmt(n) : '<span class="muted">·</span>'}</td>`;
+    let tab = 'terjual';
+    $('#lpOut').innerHTML = `
+      <div class="stats">
+        <div class="stat"><small>Stok awal ${esc(blnTeks(data.bulan))}</small><b>${sum('awal')}</b></div>
+        <div class="stat"><small>Masuk + retur</small><b>${fmt(tot.masuk + tot.retur)}</b></div>
+        <div class="stat"><small>Terjual</small><b>${sum('terjual')}</b></div>
+        <div class="stat demo"><small>Demo keluar</small><b>${sum('demo_keluar')}</b></div>
+        <div class="stat hi"><small>Stok akhir</small><b>${sum('akhir')}</b></div>
+      </div>
+      <div class="card"><h3>Ringkasan per model — ${esc(blnTeks(data.bulan))} · ${esc(data.cabang ? cabNama(data.cabang) : 'Semua cabang')}</h3>
+        <div class="table-wrap"><table class="lp"><thead><tr><th>Model</th><th>Kategori</th>${COLS.map(c => `<th class="num">${c[1]}</th>`).join('')}</tr></thead>
+        <tbody>${R.length ? R.map(r => `<tr><td>${esc(r.model)}</td><td>${badge(r.kategori)}</td>${COLS.map(c => cell(c[0], r[c[0]])).join('')}</tr>`).join('')
+          : `<tr><td colspan="${COLS.length + 2}" class="empty">Tidak ada data pada bulan ini</td></tr>`}</tbody>
+        ${R.length ? `<tfoot><tr><td colspan="2"><b>Total</b></td>${COLS.map(c => `<td class="num"><b>${(c[0] === 'ubah_kategori' && tot[c[0]] > 0 ? '+' : '') + fmt(tot[c[0]])}</b></td>`).join('')}</tr></tfoot>` : ''}
+        </table></div>
+        <p class="hint">Stok akhir = stok awal + masuk + retur + mutasi masuk − terjual − demo keluar − mutasi keluar − dihapus ± ubah kategori.</p></div>
+      <div class="card">
+        <div class="tabs" id="lpTabs"><button data-t="terjual" class="on">Terjual (${data.terjual.length})</button>
+          <button data-t="demo">Demo keluar (${data.demo.length})</button><button data-t="sisa">Sisa stok akhir bulan (${data.sisa.length})</button></div>
+        <div id="lpList"></div></div>`;
+    const drawList = () => {
+      if (tab === 'sisa') {
+        $('#lpList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>IMEI</th><th>SN</th><th>Model</th><th>Kategori</th><th>Cabang</th></tr></thead>
+          <tbody>${data.sisa.length ? data.sisa.slice(0, 500).map(u => `<tr><td class="mono">${esc(u.imei)}</td><td class="mono">${esc(u.sn)}</td>
+            <td>${esc(u.model)}</td><td>${badge(u.kategori)}</td><td>${esc(cabNama(u.cabang))}</td></tr>`).join('') : '<tr><td colspan="5" class="empty">Kosong</td></tr>'}</tbody></table></div>
+          ${data.sisa.length > 500 ? '<p class="hint">500 baris pertama ditampilkan; ekspor untuk semua.</p>' : ''}`;
+      } else {
+        const L = tab === 'terjual' ? data.terjual : data.demo;
+        $('#lpList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Tanggal</th><th>IMEI</th><th>SN</th><th>Model</th><th>Pelanggan</th><th>Sales</th><th>Cabang</th><th>Referensi</th></tr></thead>
+          <tbody>${L.length ? L.slice(0, 500).map(t => `<tr><td class="mono">${esc(t.waktu.slice(0, 16))}</td><td class="mono">${esc(t.imei)}</td><td class="mono">${esc(t.sn)}</td>
+            <td>${esc(t.model)}</td><td>${esc(t.pelanggan)}</td><td>${esc(t.sales)}</td><td>${esc(cabNama(t.cabang))}</td><td>${esc(t.referensi)}</td></tr>`).join('')
+            : '<tr><td colspan="8" class="empty">Kosong</td></tr>'}</tbody></table></div>`;
+      }
+    };
+    $$('#lpTabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; $$('#lpTabs button').forEach(x => x.classList.toggle('on', x === b)); drawList(); });
+    drawList();
+    $('#lpExp').disabled = false;
+  };
+  $('#lpGo').onclick = load;
+  $('#lpExp').onclick = () => {
+    if (!data) return;
+    const trxCols = [['waktu', 'Tanggal', 19], ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 22], ['cabang', 'Cabang', 10],
+      ['pelanggan', 'Pelanggan', 24], ['no_ktp', 'No. KTP', 19], ['sales', 'Sales', 18], ['referensi', 'Referensi', 16]];
+    exportExcelMulti(`laporan-${data.bulan}-${data.cabang || 'semua'}`, [
+      { name: 'Ringkasan', cols: [['model', 'Model', 22], ['kategori', 'Kategori', 9]].concat(COLS.map(c => [c[0], c[1], 12])),
+        rows: data.ringkasan, numeric: true },
+      { name: 'Terjual', cols: trxCols, rows: data.terjual },
+      { name: 'Demo Keluar', cols: trxCols, rows: data.demo },
+      { name: 'Sisa Stok', cols: [['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 22], ['kategori', 'Kategori', 9], ['cabang', 'Cabang', 10]], rows: data.sisa }
+    ]);
+  };
+  load();
+}
+
+/* ---------------- Cocokkan data MyRepublic ---------------- */
+const MR = {
+  COCOK: ['Cocok', 'b-on'],
+  BEDA_STATUS: ['Status berbeda', 'b-RETUR'],
+  BEDA_SN: ['SN berbeda', 'b-RETUR'],
+  HANYA_MYREP: ['Hanya di data MyRepublic', 'b-HAPUS'],
+  HANYA_KITA: ['Hanya di data kita', 'b-MUTASI'],
+  DOBEL: ['IMEI dobel di file MyRepublic', 'b-HAPUS']
+};
+/** Status di file MyRepublic -> STOK | TERJUAL | DEMO | '' | teks asli */
+function mrStatus(s) {
+  const t = String(s || '').trim().toLowerCase();
+  if (!t) return '';
+  if (/demo/.test(t)) return 'DEMO';
+  if (/(belum|not|un).{0,6}(jual|sold|install|aktif|activ)/.test(t)) return 'STOK';
+  if (/(terjual|sold|jual|aktif|activ|install|terpasang|used|pelanggan|customer|keluar|delivered)/.test(t)) return 'TERJUAL';
+  if (/(stok|stock|gudang|warehouse|available|tersedia|ready|sisa|on ?hand)/.test(t)) return 'STOK';
+  return String(s).trim().toUpperCase();
+}
+const ourStatus = u => kat(u) === 'DEMO' ? 'DEMO' : (u.status === 'GUDANG' ? 'STOK' : 'TERJUAL');
+
+async function pageCocok(v) {
+  v.innerHTML = `
+  <div class="card">
+    <h3>Cocokkan dengan data logistik MyRepublic</h3>
+    <div class="format-box">
+      Unggah file Excel/CSV dari MyRepublic. Kolom yang dikenali dari judulnya: <b>IMEI</b> (wajib), <b>SN</b> / Serial (opsional),
+      <b>Status</b> (opsional, mis. <i>Stock, Available, Sold, Installed, Terjual</i>). Data hanya dibandingkan di browser dan tidak disimpan.
+    </div>
+    <div class="row">
+      ${isUtama() ? `<label style="max-width:260px">Bandingkan dengan cabang<select id="mrCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
+      <label style="max-width:300px">Unit kita yang ikut dibandingkan<select id="mrScope">
+        <option value="all">Semua unit (stok + terjual + demo)</option><option value="STOK">Hanya stok di gudang</option></select></label>
+      <label class="btn primary file-btn">Pilih file MyRepublic…<input type="file" id="mrFile" accept=".xlsx,.xls,.csv" hidden></label>
+    </div>
+  </div>
+  <div id="mrOut"></div>`;
+  let ours = null, last = null;
+  const rerun = () => { if (last) renderCocok.apply(null, last); };
+  $('#mrScope').onchange = rerun;
+  if (isUtama()) $('#mrCab').onchange = rerun;
+  $('#mrFile').onchange = async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    $('#mrOut').innerHTML = loadingHtml('Membaca & mencocokkan…');
+    try {
+      const [X, data] = await Promise.all([loadXLSX(), ours ? Promise.resolve(ours) : API.call('stok', {})]);
+      ours = data;
+      const wb = X.read(await file.arrayBuffer(), { type: 'array' });
+      const rows = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+      const hi = rows.findIndex(r => r.some(c => /imei/i.test(String(c))));
+      if (hi < 0) throw new Error('Kolom berjudul IMEI tidak ditemukan di sheet pertama.');
+      const h = rows[hi].map(c => String(c).trim().toLowerCase());
+      const ci = { imei: h.findIndex(c => /imei/.test(c)), sn: h.findIndex(c => /^(sn|s\/n|serial|no\.?\s*seri)/.test(c)), st: h.findIndex(c => /(status|kondisi|keterangan|state)/.test(c)) };
+      const theirs = rows.slice(hi + 1).map((r, i) => ({
+        baris: hi + i + 2, imei: normImei(cellText(r[ci.imei])), sn: ci.sn >= 0 ? normSn(cellText(r[ci.sn])) : '',
+        status_asli: ci.st >= 0 ? cellText(r[ci.st]) : ''
+      })).filter(r => r.imei);
+      theirs.forEach(r => { r.status_mr = mrStatus(r.status_asli); });
+      last = [file.name, theirs, ci];
+      renderCocok(file.name, theirs, ci);
+    } catch (err) { $('#mrOut').innerHTML = errBox({ message: 'Gagal: ' + err.message }); }
+  };
+  const renderCocok = (fname, theirs, ci) => {
+    const cab = isUtama() ? $('#mrCab').value : '';
+    const scope = $('#mrScope').value;
+    const byImei = {};
+    ours.forEach(u => { byImei[u.imei] = u; });
+    const res = [], seen = {};
+    theirs.forEach(t => {
+      const u = byImei[t.imei];
+      const row = { imei: t.imei, sn_mr: t.sn, status_asli: t.status_asli, status_mr: t.status_mr, baris: t.baris,
+        sn: u ? u.sn : '', status_kita: u ? ourStatus(u) : '', cabang: u ? u.cabang : '', model: u ? u.model : '',
+        penerima: u ? u.penerima : '', tgl_keluar: u ? u.tgl_keluar : '' };
+      if (seen[t.imei]) { row.hasil = 'DOBEL'; res.push(row); return; }
+      seen[t.imei] = true;
+      if (!u) row.hasil = 'HANYA_MYREP';
+      else if (t.sn && t.sn !== u.sn) row.hasil = 'BEDA_SN';
+      else if (t.status_mr && t.status_mr !== row.status_kita) row.hasil = 'BEDA_STATUS';
+      else row.hasil = 'COCOK';
+      res.push(row);
+    });
+    ours.filter(u => !seen[u.imei] && (!cab || u.cabang === cab) && (scope === 'all' || ourStatus(u) === 'STOK')).forEach(u => res.push({
+      imei: u.imei, sn: u.sn, status_kita: ourStatus(u), cabang: u.cabang, model: u.model, penerima: u.penerima,
+      tgl_keluar: u.tgl_keluar, hasil: 'HANYA_KITA', sn_mr: '', status_mr: '', status_asli: ''
+    }));
+    const n = k => res.filter(r => r.hasil === k).length;
+    let tab = n('HANYA_MYREP') ? 'HANYA_MYREP' : n('BEDA_STATUS') ? 'BEDA_STATUS' : 'HANYA_KITA';
+    const ket = r => ({
+      HANYA_MYREP: 'Belum diinput di sistem kita (Barang Masuk) atau IMEI salah ketik',
+      HANYA_KITA: r.status_kita === 'STOK' ? 'Ada di stok kita, tidak ada di data MyRepublic' : 'Tercatat ' + r.status_kita.toLowerCase() + ' di sistem kita',
+      BEDA_STATUS: `MyRepublic: ${r.status_asli} · kita: ${r.status_kita}${r.penerima ? ' (' + r.penerima + ')' : ''}`,
+      BEDA_SN: `SN MyRepublic ${r.sn_mr} ≠ SN kita ${r.sn}`,
+      DOBEL: 'IMEI muncul lebih dari sekali di file (baris ' + r.baris + ')',
+      COCOK: ''
+    }[r.hasil]);
+    res.forEach(r => { r.keterangan = ket(r); r.hasil_teks = MR[r.hasil][0]; r.cabang_nama = r.cabang ? cabNama(r.cabang) : ''; });
+    const tStok = theirs.filter(t => t.status_mr === 'STOK').length, tJual = theirs.filter(t => t.status_mr === 'TERJUAL').length;
+    $('#mrOut').innerHTML = `
+      <div class="alert ${n('COCOK') === res.length ? 'ok' : 'bad'}" style="background:#f8f9fb;color:var(--ink-2)">
+        File <b>${esc(fname)}</b>: ${fmt(theirs.length)} baris IMEI${ci.st >= 0 ? ` · menurut MyRepublic ${fmt(tStok)} stok, ${fmt(tJual)} terjual` : ' · tanpa kolom status'}${ci.sn < 0 ? ' · tanpa kolom SN' : ''}.
+      </div>
+      <div class="stats">
+        <div class="stat hi"><small>Cocok</small><b>${fmt(n('COCOK'))}</b></div>
+        <div class="stat"><small>Status berbeda</small><b>${fmt(n('BEDA_STATUS'))}</b></div>
+        <div class="stat"><small>Hanya di MyRepublic</small><b>${fmt(n('HANYA_MYREP'))}</b></div>
+        <div class="stat"><small>Hanya di data kita</small><b>${fmt(n('HANYA_KITA'))}</b></div>
+        <div class="stat"><small>SN beda / dobel</small><b>${fmt(n('BEDA_SN') + n('DOBEL'))}</b></div>
+      </div>
+      <div class="card">
+        <div class="toolbar" style="margin-bottom:0"><div class="tabs" id="mrTabs" style="flex:1;margin:0">
+          ${['BEDA_STATUS', 'HANYA_MYREP', 'HANYA_KITA', 'BEDA_SN', 'DOBEL', 'COCOK'].map(k => `<button data-t="${k}" class="${k === tab ? 'on' : ''}">${MR[k][0]} (${n(k)})</button>`).join('')}
+        </div><button class="btn" id="mrExp">Ekspor hasil</button></div>
+        <div id="mrList" style="margin-top:14px"></div>
+      </div>`;
+    const draw = () => {
+      const L = res.filter(r => r.hasil === tab);
+      $('#mrList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>IMEI</th><th>SN kita</th><th>Model</th><th>Cabang</th><th>Status kita</th><th>Status MyRepublic</th><th>Keterangan</th></tr></thead>
+        <tbody>${L.length ? L.slice(0, 500).map(r => `<tr><td class="mono"><a href="#lacak" data-q="${esc(r.imei)}">${esc(r.imei)}</a></td>
+          <td class="mono">${esc(r.sn)}</td><td>${esc(r.model)}</td><td>${esc(r.cabang_nama)}</td>
+          <td>${r.status_kita ? badge(r.status_kita) : ''}</td>
+          <td>${esc(r.status_asli)}</td><td>${esc(r.keterangan)}</td></tr>`).join('')
+          : '<tr><td colspan="7" class="empty">Tidak ada</td></tr>'}</tbody></table></div>
+        ${L.length > 500 ? '<p class="hint">500 baris pertama ditampilkan; ekspor untuk semua.</p>' : ''}`;
+    };
+    $$('#mrTabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; $$('#mrTabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+    $('#mrList').onclick = e => { const a = e.target.closest('[data-q]'); if (a) sessionStorage.setItem('vg_lacak', a.dataset.q); };
+    const cols = [['imei', 'IMEI', 18], ['sn', 'SN Kita', 18], ['sn_mr', 'SN MyRepublic', 18], ['model', 'Model', 22], ['cabang_nama', 'Cabang', 14],
+      ['status_kita', 'Status Kita', 11], ['status_asli', 'Status MyRepublic', 16], ['penerima', 'Pelanggan', 22], ['tgl_keluar', 'Tgl Keluar', 19],
+      ['hasil_teks', 'Hasil', 24], ['keterangan', 'Keterangan', 44]];
+    $('#mrExp').onclick = () => exportExcelMulti('pencocokan-myrepublic-' + today(), [
+      { name: 'Ringkasan', cols: [['k', 'Hasil', 30], ['v', 'Jumlah', 10]], rows: Object.keys(MR).map(k => ({ k: MR[k][0], v: n(k) })), numeric: true },
+      { name: 'Perlu Dicek', cols, rows: res.filter(r => r.hasil !== 'COCOK') },
+      { name: 'Cocok', cols, rows: res.filter(r => r.hasil === 'COCOK') }
+    ]);
+    draw();
+  };
+}
+
 const PAGES = {
   dashboard: pageDashboard, masuk: pageMasuk, keluar: pageKeluar, mutasi: pageMutasi,
   stok: pageStok, riwayat: pageRiwayat, lacak: pageLacak, pelanggan: pagePelanggan, sales: pageSales,
+  opname: pageOpname, laporan: pageLaporan, cocok: pageCocok,
   cabang: pageCabang, pengguna: pagePengguna, password: pagePassword
 };
 

@@ -72,6 +72,17 @@ apps-script/
 - **Lacak Unit** menampilkan pelanggan, alamat, lokasi, dan sales dari sebuah IMEI/SN. Tombol **Unit** di menu Pelanggan menampilkan semua IMEI yang ada di pelanggan tersebut.
 - Admin utama dapat mengubah kategori unit di gudang lewat Lacak Unit, misalnya demo selesai lalu dijual. Perubahan tercatat di riwayat.
 
+## Stock opname bulanan
+Menu **Stock Opname**:
+- **Hitung Fisik**: mulai opname per cabang, lalu scan semua unit yang ada di gudang. Bisa dihentikan dan dilanjutkan nanti karena hasil scan tersimpan di server. Saat diselesaikan, sistem mencatat:
+  - *Cocok*: fisik ada dan sistem mencatat ada di gudang cabang ini.
+  - *Tidak ditemukan fisik*: sistem mencatat ada, tetapi tidak discan.
+  - *Tidak terdaftar*: fisik ada, tetapi IMEI/SN tidak ada di sistem.
+  - *Tercatat sudah keluar* / *Tercatat di cabang lain*.
+  Opname tidak mengubah stok; selisih ditindaklanjuti lewat Barang Masuk, Mutasi, atau Hapus. Hasilnya bisa diekspor ke Excel.
+- **Laporan Bulanan**: per bulan dan per cabang, ringkasan per model/kategori (stok awal, masuk, retur, mutasi, terjual, demo keluar, dihapus, stok akhir), beserta daftar IMEI terjual (pelanggan, KTP, sales), demo keluar, dan sisa stok akhir bulan. Stok awal dan akhir direkonstruksi dari riwayat transaksi, jadi bulan lampau pun bisa ditarik. Diekspor ke Excel 4 sheet.
+- **Cocokkan MyRepublic**: unggah file Excel dari logistik MyRepublic (kolom IMEI wajib; SN dan Status opsional). Sistem membandingkan per IMEI: cocok, status berbeda, SN berbeda, hanya ada di data MyRepublic, hanya ada di data kita, dan IMEI dobel. Status MyRepublic seperti *Stock/Available* dibaca sebagai stok, *Sold/Installed/Active* sebagai terjual, dan *Demo* sebagai demo. Hasilnya bisa diekspor; file tidak disimpan di server.
+
 ## Update aplikasi
 - Perubahan frontend: timpa file di GitHub **kecuali `js/config.js`**.
 - Perubahan `Code.gs`: tempel kode baru, **jalankan `setup()` sekali lagi** (aman: hanya menambah sheet dan kolom baru, data lama tidak berubah), lalu **Terapkan → Kelola deployment → Edit → Versi: Baru**. Dengan cara ini URL tetap sama.
