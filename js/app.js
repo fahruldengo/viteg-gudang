@@ -162,6 +162,51 @@ async function exportExcel(nama, cols, rows) {
   }
 }
 
+/** Paginasi: pilihan jumlah baris (5/10/25/50/100/Semua) + navigasi halaman. Pilihan diingat per halaman. */
+const PG_SIZES = [5, 10, 25, 50, 100, 0];
+function makePager(key, onChange, def = 25) {
+  let size = def, page = 0;
+  try { const v = localStorage.getItem('vg_pg_' + key); if (v !== null && PG_SIZES.includes(+v)) size = +v; } catch (e) {}
+  const pages = n => size ? Math.max(1, Math.ceil(n / size)) : 1;
+  const P = {
+    reset() { page = 0; },
+    slice(rows) {
+      if (page > pages(rows.length) - 1) page = pages(rows.length) - 1;
+      return size ? rows.slice(page * size, page * size + size) : rows;
+    },
+    html(n, unit) {
+      const pg = pages(n), from = n ? (size ? page * size + 1 : 1) : 0, to = size ? Math.min(n, (page + 1) * size) : n;
+      return `<div class="pager" data-pager="${key}">
+        <label class="pg-size">Tampilkan<select>${PG_SIZES.map(s => `<option value="${s}" ${s === size ? 'selected' : ''}>${s || 'Semua'}</option>`).join('')}</select></label>
+        <span class="pg-info"><b>${fmt(from)}–${fmt(to)}</b> dari <b>${fmt(n)}</b> ${unit}</span>
+        <span class="pg-nav">
+          <button class="btn sm" data-pg="first" title="Halaman pertama" ${page === 0 ? 'disabled' : ''}>«</button>
+          <button class="btn sm" data-pg="prev" title="Sebelumnya" ${page === 0 ? 'disabled' : ''}>‹</button>
+          <span class="pg-page">Hal. <b>${page + 1}</b> / ${pg}</span>
+          <button class="btn sm" data-pg="next" title="Berikutnya" ${page >= pg - 1 ? 'disabled' : ''}>›</button>
+          <button class="btn sm" data-pg="last" title="Halaman terakhir" ${page >= pg - 1 ? 'disabled' : ''}>»</button>
+        </span></div>`;
+    },
+    bind(root, n) {
+      const el = root.querySelector(`[data-pager="${key}"]`);
+      if (!el) return;
+      el.querySelector('select').onchange = e => {
+        size = +e.target.value; page = 0;
+        try { localStorage.setItem('vg_pg_' + key, size); } catch (_) {}
+        onChange();
+      };
+      el.querySelectorAll('[data-pg]').forEach(b => b.onclick = () => {
+        const a = b.dataset.pg;
+        page = a === 'first' ? 0 : a === 'prev' ? page - 1 : a === 'next' ? page + 1 : pages(n) - 1;
+        onChange();
+        const top = root.closest('.card');
+        if (top && top.getBoundingClientRect().top < 0) top.scrollIntoView({ behavior: 'smooth' });
+      });
+    }
+  };
+  return P;
+}
+
 /* ---------------- modal ---------------- */
 function modal(html) {
   $('#modalCard').innerHTML = html;
@@ -742,8 +787,8 @@ async function pagePilih(v, mode) {
 async function pageStok(v) {
   const all = await API.call('stok', {});
   const models = [...new Set(all.map(u => u.model))].sort();
-  const PAGE = 100;
-  let page = 0, rows = [];
+  let rows = [];
+  const pg = makePager('stok', () => draw());
   v.innerHTML = `
   <div class="card">
     <div class="toolbar">
@@ -757,8 +802,7 @@ async function pageStok(v) {
     <div class="table-wrap"><table>
       <thead><tr><th>IMEI</th><th>SN</th><th>Model</th><th>Kategori</th><th>Status</th><th>Cabang</th><th>Tgl masuk</th><th>Tgl keluar</th><th>Pelanggan / penerima</th><th>Sales</th><th>Referensi</th></tr></thead>
       <tbody id="sBody"></tbody></table></div>
-    <div class="summary"><span id="sInfo"></span>
-      <div class="row"><button class="btn sm" id="pPrev">‹ Sebelumnya</button><button class="btn sm" id="pNext">Berikutnya ›</button></div></div>
+    <div id="sPager"></div>
   </div>`;
 
   all.forEach(u => { u.kategori = kat(u); u.sales = salesNama(u.sales_id, ''); });
@@ -768,25 +812,21 @@ async function pageStok(v) {
     rows = all.filter(u => (!cab || u.cabang === cab) && (!st || u.status === st) && (!kt || u.kategori === kt) &&
       (!mod || u.model === mod) &&
       (!q || [u.imei, u.sn, u.penerima, u.sales, u.referensi].join(' ').toUpperCase().includes(q)));
-    page = 0; draw();
+    pg.reset(); draw();
   };
   const draw = () => {
-    const slice = rows.slice(page * PAGE, page * PAGE + PAGE);
+    const slice = pg.slice(rows);
     $('#sBody').innerHTML = slice.length ? slice.map(u => `<tr>
       <td class="mono"><a href="#lacak" data-q="${esc(u.imei)}">${esc(u.imei)}</a></td><td class="mono">${esc(u.sn)}</td>
       <td>${esc(u.model)}</td><td>${badge(u.kategori)}</td><td>${badge(u.status)}</td><td>${esc(cabNama(u.cabang))}</td>
       <td class="mono">${esc(u.tgl_masuk.slice(0, 16))}</td><td class="mono">${esc(u.tgl_keluar.slice(0, 16))}</td>
       <td>${esc(u.penerima)}</td><td>${esc(u.sales)}</td><td>${esc(u.referensi)}</td></tr>`).join('')
       : '<tr><td colspan="11" class="empty">Tidak ada data</td></tr>';
-    const from = rows.length ? page * PAGE + 1 : 0;
-    $('#sInfo').innerHTML = `Menampilkan <b>${fmt(from)}–${fmt(Math.min(rows.length, (page + 1) * PAGE))}</b> dari <b>${fmt(rows.length)}</b> unit`;
-    $('#pPrev').disabled = page === 0;
-    $('#pNext').disabled = (page + 1) * PAGE >= rows.length;
+    $('#sPager').innerHTML = pg.html(rows.length, 'unit');
+    pg.bind($('#sPager'), rows.length);
   };
   $$('#fCab, #fSt, #fKat, #fMod', v).forEach(el => el.onchange = apply);
   $('#fQ').oninput = apply;
-  $('#pPrev').onclick = () => { page--; draw(); };
-  $('#pNext').onclick = () => { page++; draw(); };
   $('#sBody').onclick = e => { const a = e.target.closest('[data-q]'); if (a) sessionStorage.setItem('vg_lacak', a.dataset.q); };
   $('#fExp').onclick = () => exportExcel('stok-' + today(), [
     ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 24], ['kategori', 'Kategori', 9], ['status', 'Status', 10],
@@ -800,6 +840,7 @@ async function pageStok(v) {
 /* ---------------- Riwayat ---------------- */
 async function pageRiwayat(v) {
   let data = [], rows = [];
+  const pg = makePager('riwayat', () => render());
   const LS = 'vg_riwayat_cols';
   let keys;
   try { keys = JSON.parse(localStorage.getItem(LS) || 'null'); } catch (e) { keys = null; }
@@ -851,12 +892,16 @@ async function pageRiwayat(v) {
     });
     if (q) chips.push(`<span class="chip">Cari: <b>${esc($('#rQ').value.trim())}</b></span>`);
     $('#rChips').innerHTML = chips.join('');
+    pg.reset();
+    render();
+  };
+  const render = () => {
     const per = {};
     rows.forEach(t => { per[t.jenis] = (per[t.jenis] || 0) + 1; });
-    const shown = rows.slice(0, 500);
-    $('#rOut').innerHTML = trxTable(shown, keys) +
-      `<div class="summary"><span><b>${fmt(rows.length)}</b> transaksi${rows.length > 500 ? ' (500 teratas ditampilkan; ekspor untuk semua)' : ''}
-        ${Object.keys(per).length > 1 ? ' · ' + Object.keys(per).map(k => `${badge(k)} ${fmt(per[k])}`).join(' ') : ''}</span></div>`;
+    $('#rOut').innerHTML =
+      (Object.keys(per).length > 1 ? `<div class="per-jenis">${Object.keys(per).map(k => `${badge(k)} ${fmt(per[k])}`).join(' ')}</div>` : '') +
+      trxTable(pg.slice(rows), keys) + pg.html(rows.length, 'transaksi');
+    pg.bind($('#rOut'), rows.length);
   };
   const fillOpts = () => {
     const fill = (id, list, label) => {
@@ -877,7 +922,7 @@ async function pageRiwayat(v) {
     keys = $$('#rCols input:checked').map(i => i.value);
     if (!keys.length) { keys = ['waktu', 'jenis', 'imei']; }
     try { localStorage.setItem(LS, JSON.stringify(keys)); } catch (e) {}
-    if (data.length) apply();
+    if (data.length) render();
   };
   $('#rColBtn').onclick = e => { e.stopPropagation(); $('#rCols').classList.toggle('hidden'); };
   $('#rCols').onclick = e => e.stopPropagation();
