@@ -72,6 +72,18 @@ apps-script/
 - **Lacak Unit** menampilkan pelanggan, alamat, lokasi, dan sales dari sebuah IMEI/SN. Tombol **Unit** di menu Pelanggan menampilkan semua IMEI yang ada di pelanggan tersebut.
 - Admin utama dapat mengubah kategori unit di gudang lewat Lacak Unit, misalnya demo selesai lalu dijual. Perubahan tercatat di riwayat.
 
+## Penjualan & pembayaran
+- Form **Barang Keluar → Penjualan** punya **Tanggal penjualan** (default hari ini) dan **Tanggal bayar** (kosongkan bila belum dibayar).
+- Menu **Data Penjualan** menampilkan semua barang keluar beserta pelanggan, No. HP (klik untuk membuka WhatsApp), sales, dan status pembayaran (*LUNAS* atau *BELUM BAYAR* + umur dalam hari). Data bisa difilter per tanggal jual, status bayar, jenis, sales, dan cabang.
+  - Centang beberapa penjualan lalu **Tandai lunas** untuk mengisi tanggal bayar sekaligus.
+  - Tombol **Edit** untuk mengubah pelanggan, sales, tanggal jual/bayar, referensi, dan keterangan. Setiap perubahan tercatat di riwayat sebagai jenis *EDIT* beserta isi perubahannya, dan laporan bulanan ikut memakai data terbaru.
+- Dashboard menampilkan jumlah **penjualan belum dibayar**; klik untuk langsung membuka daftarnya.
+- Pelanggan kini punya **No. HP / WhatsApp**.
+
+## Riwayat transaksi
+- Filter: jenis, cabang, kategori, sales, model, pengguna, dan pencarian bebas. Filter yang aktif tampil sebagai label di atas tabel.
+- Tombol **Kolom** untuk memilih kolom yang ditampilkan (termasuk Kategori, Tgl jual, Tgl bayar, ID transaksi). Pilihan diingat di browser dan juga dipakai saat ekspor Excel.
+
 ## Stock opname bulanan
 Menu **Stock Opname**:
 - **Hitung Fisik**: mulai opname per cabang, lalu scan semua unit yang ada di gudang. Bisa dihentikan dan dilanjutkan nanti karena hasil scan tersimpan di server. Saat diselesaikan, sistem mencatat:
