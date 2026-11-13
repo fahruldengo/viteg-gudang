@@ -72,17 +72,18 @@ apps-script/
 - **Lacak Unit** menampilkan pelanggan, alamat, lokasi, dan sales dari sebuah IMEI/SN. Tombol **Unit** di menu Pelanggan menampilkan semua IMEI yang ada di pelanggan tersebut.
 - Admin utama dapat mengubah kategori unit di gudang lewat Lacak Unit, misalnya demo selesai lalu dijual. Perubahan tercatat di riwayat.
 
-## Penjualan & pembayaran
-- Form **Barang Keluar → Penjualan** punya **Tanggal penjualan** (default hari ini) dan **Tanggal bayar** (kosongkan bila belum dibayar).
-- Menu **Data Penjualan** menampilkan semua barang keluar beserta pelanggan, No. HP (klik untuk membuka WhatsApp), sales, dan status pembayaran (*LUNAS* atau *BELUM BAYAR* + umur dalam hari). Data bisa difilter per tanggal jual, status bayar, jenis, sales, dan cabang.
-  - Centang beberapa penjualan lalu **Tandai lunas** untuk mengisi tanggal bayar sekaligus.
-  - Tombol **Edit** untuk mengubah pelanggan, sales, tanggal jual/bayar, referensi, dan keterangan. Setiap perubahan tercatat di riwayat sebagai jenis *EDIT* beserta isi perubahannya, dan laporan bulanan ikut memakai data terbaru.
-- Dashboard menampilkan jumlah **penjualan belum dibayar**; klik untuk langsung membuka daftarnya.
-- Pelanggan kini punya **No. HP / WhatsApp**.
+## Penjualan / rental, paket, dan tagihan
+- **Barang Keluar → Penjualan / rental**: wajib memilih **jenis barang keluar** (*Jual putus* atau *Rental*), **paket**, pelanggan, dan sales. Isian lain: tanggal penjualan, **tanggal tagihan awal**, dan **No. FAB**.
+- **Paket** (menu Master Data): nama, kecepatan, harga per bulan, keterangan, dan status. Paket dikelola admin utama; admin cabang hanya bisa memilihnya. Paket nonaktif tidak bisa dipilih untuk penjualan baru.
+- **Tanggal tagihan awal** menjadi dasar pengingat bulanan. Jatuh tempo berikutnya jatuh di tanggal yang sama setiap bulan; untuk bulan yang lebih pendek dipakai tanggal terakhir bulan itu (mis. tagihan tgl 31 → 28/29 Feb).
+- **Jatuh Tempo** (menu Transaksi): daftar tagihan yang jatuh tempo hari ini, 3, 7, 14 hari, atau 1 bulan ke depan. Dilengkapi tombol **WhatsApp** berisi pesan pengingat yang bisa diatur lewat **Template pesan** (kode `{nama}`, `{paket}`, `{tanggal}`, `{imei}`, `{fab}`, `{sales}`). Jumlah tagihan yang jatuh tempo dalam 7 hari tampil sebagai angka merah di menu dan di dashboard.
+- **Data Penjualan**: filter per jenis keluar, paket, dan status tagihan awal; centang beberapa unit lalu **Isi tgl tagihan awal** sekaligus; tombol **Edit** untuk mengubah pelanggan, sales, jenis, paket, tanggal, dan No. FAB (tercatat di riwayat sebagai *EDIT*).
+- Pelanggan punya **No. HP / WhatsApp**.
+- Data versi sebelumnya otomatis disesuaikan saat `setup()` dijalankan: *tanggal bayar* lama dipindahkan menjadi *tanggal tagihan awal*, dan penjualan lama dianggap *Jual putus*. Paket untuk penjualan lama bisa dilengkapi lewat Edit.
 
 ## Riwayat transaksi
 - Filter: jenis, cabang, kategori, sales, model, pengguna, dan pencarian bebas. Filter yang aktif tampil sebagai label di atas tabel.
-- Tombol **Kolom** untuk memilih kolom yang ditampilkan (termasuk Kategori, Tgl jual, Tgl bayar, ID transaksi). Pilihan diingat di browser dan juga dipakai saat ekspor Excel.
+- Tombol **Kolom** untuk memilih kolom yang ditampilkan (termasuk Kategori, Tgl jual, Tgl tagihan awal, Jenis keluar, Paket, ID transaksi). Pilihan diingat di browser dan juga dipakai saat ekspor Excel.
 
 ## Stock opname bulanan
 Menu **Stock Opname**:

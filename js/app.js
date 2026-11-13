@@ -1,7 +1,7 @@
 /* ============================================================
    VITEG Gudang — aplikasi frontend
    ============================================================ */
-const App = { user: null, cabang: [], models: [], sales: [], pelanggan: [] };
+const App = { user: null, cabang: [], models: [], sales: [], pelanggan: [], paket: [] };
 const CHUNK_MASUK = 25;   // batas aman panjang URL GET
 const CHUNK_KELUAR = 50;
 
@@ -223,6 +223,7 @@ const MENU = [
   { id: 'masuk', label: 'Barang Masuk', ic: '↓' },
   { id: 'keluar', label: 'Barang Keluar', ic: '↑' },
   { id: 'penjualan', label: 'Data Penjualan', ic: '◷' },
+  { id: 'jatuhtempo', label: 'Jatuh Tempo', ic: '⏰' },
   { id: 'mutasi', label: 'Mutasi Cabang', ic: '⇄', utama: true },
   { g: 'Data' },
   { id: 'stok', label: 'Stok Unit', ic: '▤' },
@@ -235,6 +236,7 @@ const MENU = [
   { g: 'Master Data' },
   { id: 'pelanggan', label: 'Pelanggan', ic: '◉' },
   { id: 'sales', label: 'Sales', ic: '★' },
+  { id: 'paket', label: 'Paket', ic: '▣' },
   { g: 'Pengaturan' },
   { id: 'cabang', label: 'Cabang', ic: '⌂', utama: true },
   { id: 'pengguna', label: 'Pengguna', ic: '☺', utama: true },
@@ -244,8 +246,14 @@ const MENU = [
 function renderNav() {
   $('#nav').innerHTML = MENU.filter(m => !m.utama || isUtama()).map(m =>
     m.g ? `<div class="group">${m.g}</div>`
-        : `<a href="#${m.id}" data-id="${m.id}"><span class="ic">${m.ic}</span>${m.label}</a>`
+        : `<a href="#${m.id}" data-id="${m.id}"><span class="ic">${m.ic}</span>${m.label}<span class="nav-badge hidden" data-badge="${m.id}"></span></a>`
   ).join('');
+}
+function setNavBadge(id, n) {
+  const el = document.querySelector(`[data-badge="${id}"]`);
+  if (!el) return;
+  el.textContent = n > 99 ? '99+' : n;
+  el.classList.toggle('hidden', !n);
 }
 
 async function route() {
@@ -283,7 +291,7 @@ async function showApp() {
   $('#view').innerHTML = loadingHtml();
   try {
     const d = await API.call('init');
-    App.user = d.user; App.cabang = d.cabang; App.models = d.models; App.sales = d.sales || [];
+    App.user = d.user; App.cabang = d.cabang; App.models = d.models; App.sales = d.sales || []; App.paket = d.paket || [];
   } catch (e) {
     if (e.code === 'AUTH') { Auth.clear(); showLogin(); return; }
     $('#view').innerHTML = errBox(e);
@@ -293,6 +301,9 @@ async function showApp() {
   $('#userRole').textContent = (isUtama() ? 'Admin Utama' : 'Admin Cabang') + ' · ' + cabNama(App.user.cabang);
   renderNav();
   route();
+  if ((location.hash || '#dashboard') !== '#dashboard') {
+    API.call('dashboard').then(d => setNavBadge('jatuhtempo', d.jatuhTempo)).catch(() => {});
+  }
 }
 
 $('#loginForm').addEventListener('submit', async e => {
@@ -328,6 +339,7 @@ window.addEventListener('hashchange', () => { if (App.user) route(); });
 /* ---------------- Dashboard ---------------- */
 async function pageDashboard(v) {
   const d = await API.call('dashboard');
+  setNavBadge('jatuhtempo', d.jatuhTempo);
   const tbl = (obj, head, label) => {
     const rows = Object.keys(obj).sort((a, b) => obj[b] - obj[a]);
     return `<div class="table-wrap"><table><thead><tr><th>${head}</th><th class="num">Unit</th></tr></thead><tbody>
@@ -343,7 +355,8 @@ async function pageDashboard(v) {
       <div class="stat"><small>Total terjual</small><b>${fmt(d.keluar)}</b></div>
       <div class="stat demo"><small>Demo di gudang</small><b>${fmt(d.stokDemo)}</b></div>
       <div class="stat demo"><small>Demo dibawa sales</small><b>${fmt(d.demoKeluar)}</b></div>
-      <a class="stat link" href="#penjualan" onclick="sessionStorage.setItem('vg_penjualan','BELUM')"><small>Penjualan belum dibayar →</small><b style="color:${d.belumBayar ? 'var(--bad)' : 'inherit'}">${fmt(d.belumBayar || 0)}</b></a>
+      <a class="stat link" href="#jatuhtempo"><small>Tagihan jatuh tempo ≤ 7 hari →</small><b style="color:${d.jatuhTempo ? 'var(--bad)' : 'inherit'}">${fmt(d.jatuhTempo || 0)}</b></a>
+      <a class="stat link" href="#penjualan" onclick="sessionStorage.setItem('vg_penjualan','KOSONG')"><small>Tagihan awal belum diisi →</small><b>${fmt(d.tagihanKosong || 0)}</b></a>
     </div>
     <div class="grid2" style="margin-bottom:18px">
       <div class="card"><h3>Stok per cabang</h3>${tbl(d.perCabang, 'Cabang', cabNama)}</div>
@@ -366,8 +379,10 @@ const TRX_COLS = [
   { k: 'penerima', l: 'Pelanggan / penerima', td: t => `<td>${esc(t.penerima)}</td>`, def: 1 },
   { k: 'sales', l: 'Sales', td: t => `<td>${t.sales_id ? esc(salesNama(t.sales_id)) : ''}</td>`, def: 1, x: t => t.sales_id ? salesNama(t.sales_id) : '' },
   { k: 'tgl_jual', l: 'Tgl jual', td: t => `<td class="mono">${esc(t.tgl_jual)}</td>` },
-  { k: 'tgl_bayar', l: 'Tgl bayar', td: t => `<td class="mono">${esc(t.tgl_bayar)}</td>` },
-  { k: 'referensi', l: 'Referensi', td: t => `<td>${esc(t.referensi)}</td>`, def: 1 },
+  { k: 'tgl_tagihan', l: 'Tgl tagihan awal', td: t => `<td class="mono">${esc(t.tgl_tagihan)}</td>` },
+  { k: 'skema', l: 'Jenis keluar', td: t => `<td>${t.skema ? `<span class="badge b-${esc(t.skema)}">${esc(skemaNama(t.skema))}</span>` : ''}</td>`, x: t => skemaNama(t.skema) },
+  { k: 'paket', l: 'Paket', td: t => `<td>${esc(paketNama(t.paket_id))}</td>`, x: t => paketNama(t.paket_id) },
+  { k: 'referensi', l: 'Referensi / No. FAB', td: t => `<td>${esc(t.referensi)}</td>`, def: 1 },
   { k: 'keterangan', l: 'Keterangan', td: t => `<td class="ket">${esc(t.keterangan)}</td>`, def: 1 },
   { k: 'oleh', l: 'Oleh', td: t => `<td>${esc(t.oleh)}</td>`, def: 1 },
   { k: 'id', l: 'ID transaksi', td: t => `<td class="mono">${esc(t.id)}</td>` }
@@ -597,7 +612,7 @@ async function pagePilih(v, mode) {
 
   v.innerHTML = `
   ${isK ? `<div class="seg" id="kTipe">
-      <button data-v="JUAL" class="on">Penjualan<small>Barang jual → pelanggan</small></button>
+      <button data-v="JUAL" class="on">Penjualan / rental<small>Jual putus atau rental → pelanggan</small></button>
       <button data-v="DEMO">Barang demo<small>Dibawa sales, tidak dijual</small></button>
     </div>` : ''}
   <div class="card">
@@ -614,8 +629,10 @@ async function pagePilih(v, mode) {
         </label>
         <label>Sales <span id="salesHint" class="muted"></span><select id="kSales">${opsiSales()}</select></label>
         <label class="jual-only">Tanggal penjualan<input type="date" id="kTglJual" value="${today()}" max="${today()}"></label>
-        <label class="jual-only">Tanggal bayar <span class="muted">(kosongkan bila belum bayar)</span><input type="date" id="kTglBayar" max="${today()}"></label>
-        <label>No. referensi<input id="kRef" placeholder="No. WO / order"></label>`
+        <label class="jual-only">Jenis barang keluar<select id="kSkema">${opsiSkema('')}</select></label>
+        <label class="jual-only">Paket<select id="kPaket">${opsiPaket('')}</select></label>
+        <label class="jual-only">Tanggal tagihan awal <span class="muted">(dasar pengingat jatuh tempo)</span><input type="date" id="kTglTagihan"></label>
+        <label>No. FAB<input id="kRef" placeholder="Nomor FAB"></label>`
       : `<label>Cabang tujuan<select id="kTuj">${opsiCabang('', '— pilih cabang —')}</select></label>
          <label>No. referensi<input id="kRef" placeholder="No. surat jalan"></label>`}
       <label>Keterangan<input id="kKet" placeholder="Opsional"></label>
@@ -643,7 +660,7 @@ async function pagePilih(v, mode) {
     </div>
   </div>`;
 
-  const saveLabel = () => isK ? (tipe === 'JUAL' ? 'Simpan penjualan' : 'Simpan barang demo keluar') : 'Simpan mutasi';
+  const saveLabel = () => isK ? (tipe === 'JUAL' ? 'Simpan penjualan / rental' : 'Simpan barang demo keluar') : 'Simpan mutasi';
   const render = () => {
     $('#kBody').innerHTML = list.length ? list.map((u, i) => `<tr>
       <td>${i + 1}</td><td class="mono">${esc(u.imei)}</td><td class="mono">${esc(u.sn)}</td>
@@ -746,9 +763,13 @@ async function pagePilih(v, mode) {
       base.pelanggan_id = pelSel ? pelSel.id : '';
       if (tipe === 'JUAL') {
         base.tgl_jual = $('#kTglJual').value;
-        base.tgl_bayar = $('#kTglBayar').value;
+        base.tgl_tagihan = $('#kTglTagihan').value;
+        base.skema = $('#kSkema').value;
+        base.paket_id = $('#kPaket').value;
+        if (!base.skema) { toast('Pilih jenis barang keluar: jual putus atau rental', true); $('#kSkema').focus(); return; }
+        if (!base.paket_id) { toast('Pilih paket', true); $('#kPaket').focus(); return; }
         if (!base.tgl_jual) { toast('Isi tanggal penjualan', true); return; }
-        if (base.tgl_bayar && base.tgl_bayar < base.tgl_jual) { toast('Tanggal bayar tidak boleh sebelum tanggal penjualan', true); return; }
+        if (base.tgl_tagihan && base.tgl_tagihan < base.tgl_jual) { toast('Tanggal tagihan awal tidak boleh sebelum tanggal penjualan', true); return; }
       }
     } else {
       base.tujuan = $('#kTuj').value;
@@ -770,7 +791,7 @@ async function pagePilih(v, mode) {
       msg.innerHTML = okBox(!isK
         ? `<strong>Tersimpan.</strong> ${done} unit dipindahkan ke ${esc(cabNama(base.tujuan))}.`
         : tipe === 'JUAL'
-          ? `<strong>Penjualan tersimpan.</strong> ${done} unit ke ${esc(pelSel.nama)} · sales ${esc(salesNama(base.sales_id))}.`
+          ? `<strong>${esc(skemaNama(base.skema))} tersimpan.</strong> ${done} unit ke ${esc(pelSel.nama)} · paket ${esc(paketNama(base.paket_id))} · sales ${esc(salesNama(base.sales_id))}.`
           : `<strong>Tersimpan.</strong> ${done} unit demo dibawa ${esc(salesNama(base.sales_id))}${pelSel ? ' untuk ' + esc(pelSel.nama) : ''}.`);
       toast('Transaksi tersimpan');
     } catch (e) {
@@ -832,8 +853,9 @@ async function pageStok(v) {
     ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 24], ['kategori', 'Kategori', 9], ['status', 'Status', 10],
     ['cabang', 'Cabang', 10], ['tgl_masuk', 'Tgl Masuk', 19], ['tgl_keluar', 'Tgl Keluar', 19],
     ['pelanggan_id', 'ID Pelanggan', 12], ['penerima', 'Pelanggan / Penerima', 24], ['sales', 'Sales', 20],
-    ['referensi', 'Referensi', 18], ['keterangan', 'Keterangan', 24]
-  ], rows);
+    ['jenis_keluar', 'Jenis Keluar', 12], ['paket', 'Paket', 20], ['tgl_tagihan', 'Tgl Tagihan Awal', 14],
+    ['referensi', 'Referensi / No. FAB', 18], ['keterangan', 'Keterangan', 24]
+  ], rows.map(u => Object.assign({}, u, { jenis_keluar: u.status === 'KELUAR' && u.kategori === 'JUAL' ? skemaNama(u.skema || 'JUAL_PUTUS') : '', paket: paketNama(u.paket_id) })));
   apply();
 }
 
@@ -844,6 +866,7 @@ async function pageRiwayat(v) {
   const LS = 'vg_riwayat_cols';
   let keys;
   try { keys = JSON.parse(localStorage.getItem(LS) || 'null'); } catch (e) { keys = null; }
+  if (Array.isArray(keys)) keys = keys.map(k => k === 'tgl_bayar' ? 'tgl_tagihan' : k).filter(k => TRX_COLS.some(c => c.k === k));
   if (!Array.isArray(keys) || !keys.length) keys = TRX_COLS.filter(c => c.def).map(c => c.k);
   const JENIS = [['MASUK', 'Masuk'], ['KELUAR', 'Keluar (penjualan)'], ['DEMO', 'Keluar demo'], ['RETUR', 'Retur'],
     ['MUTASI', 'Mutasi'], ['EDIT', 'Edit / pembayaran'], ['KATEGORI', 'Ubah kategori'], ['HAPUS', 'Hapus']];
@@ -942,15 +965,60 @@ async function pageRiwayat(v) {
   load();
 }
 
-/* ---------------- Data Penjualan & pembayaran ---------------- */
-const umurHari = d => d ? Math.max(0, Math.round((new Date(today()) - new Date(d)) / 86400000)) : 0;
-const bayarBadge = u => u.tgl_bayar
-  ? `<span class="badge b-LUNAS">LUNAS</span> <span class="mono">${esc(u.tgl_bayar)}</span>`
-  : `<span class="badge b-BELUM">BELUM BAYAR</span> <small class="muted">${umurHari(u.tgl_jual)} hari</small>`;
+/* ---------------- Penjualan / rental, tagihan, jatuh tempo ---------------- */
+const SKEMA = { JUAL_PUTUS: 'Jual putus', RENTAL: 'Rental' };
+const skemaNama = s => SKEMA[s] || '';
+const paketNama = (id, dflt = '') => { const p = (App.paket || []).find(x => x.id === id); return p ? p.nama : (id || dflt); };
+const pad2 = n => (n < 10 ? '0' : '') + n;
+/** Jatuh tempo berikutnya (siklus bulanan) dari tanggal tagihan awal. */
+function nextDue(tagihan, tg = today()) {
+  if (!tagihan) return '';
+  if (tagihan >= tg) return tagihan;
+  const day = +tagihan.slice(8, 10);
+  let y = +tg.slice(0, 4), m = +tg.slice(5, 7);
+  const mk = (y, m) => `${y}-${pad2(m)}-${pad2(Math.min(day, new Date(Date.UTC(y, m, 0)).getUTCDate()))}`;
+  let d = mk(y, m);
+  if (d < tg) { m++; if (m > 12) { m = 1; y++; } d = mk(y, m); }
+  return d;
+}
+const selisihHari = (a, b) => Math.round((Date.UTC(+b.slice(0, 4), +b.slice(5, 7) - 1, +b.slice(8, 10)) - Date.UTC(+a.slice(0, 4), +a.slice(5, 7) - 1, +a.slice(8, 10))) / 86400000);
+const NAMA_BLN_S = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const tglIndo = d => d ? `${+d.slice(8, 10)} ${NAMA_BLN_S[+d.slice(5, 7) - 1]} ${d.slice(0, 4)}` : '';
+function dueBadge(tagihan) {
+  if (!tagihan) return '<span class="badge b-BELUM">TAGIHAN BELUM DIISI</span>';
+  const nd = nextDue(tagihan), h = selisihHari(today(), nd);
+  const cls = h === 0 ? 'b-DUE0' : h <= 3 ? 'b-DUE3' : h <= 7 ? 'b-DUE7' : 'b-DUEOK';
+  return `<span class="badge ${cls}">${h === 0 ? 'HARI INI' : 'H-' + h}</span> <span class="mono">${esc(nd)}</span>`;
+}
+function opsiPaket(sel, kosong = '— pilih paket —') {
+  return `<option value="">${kosong}</option>` + (App.paket || []).filter(p => p.aktif === '1' || p.id === sel)
+    .map(p => `<option value="${esc(p.id)}" ${p.id === sel ? 'selected' : ''}>${esc(p.nama)}${p.aktif === '1' ? '' : ' (nonaktif)'}</option>`).join('');
+}
+const opsiSkema = (sel, kosong = '— pilih jenis —') => `<option value="">${kosong}</option>` +
+  Object.keys(SKEMA).map(k => `<option value="${k}" ${k === sel ? 'selected' : ''}>${SKEMA[k]}</option>`).join('');
+const waLink = (hp, text) => hp ? `https://wa.me/62${hp.slice(1)}${text ? '?text=' + encodeURIComponent(text) : ''}` : '';
 
 async function ensurePelanggan() {
   if (!App.pelanggan || !App.pelanggan.length) App.pelanggan = await API.call('pelanggan');
   return App.pelanggan;
+}
+
+/** Siapkan field turunan pada unit keluar (dipakai Data Penjualan & Jatuh Tempo). */
+function prepKeluar(u, pelById) {
+  u.kategori = kat(u);
+  if (u.kategori === 'JUAL') {
+    if (!u.tgl_jual) u.tgl_jual = u.tgl_keluar.slice(0, 10);
+    if (!u.skema) u.skema = 'JUAL_PUTUS';
+  }
+  u.tgl_ref = u.tgl_jual || u.tgl_keluar.slice(0, 10);
+  const p = pelById[u.pelanggan_id];
+  u.no_hp = p ? p.no_hp : '';
+  u.sales = salesNama(u.sales_id, '');
+  u.paket = paketNama(u.paket_id);
+  u.jenis_keluar = u.kategori === 'DEMO' ? 'Demo' : skemaNama(u.skema);
+  u.jatuh_tempo = u.kategori === 'JUAL' ? nextDue(u.tgl_tagihan) : '';
+  u.sisa_hari = u.jatuh_tempo ? selisihHari(today(), u.jatuh_tempo) : '';
+  return u;
 }
 
 /** Modal edit barang keluar. u = unit (status KELUAR). */
@@ -967,12 +1035,14 @@ async function editKeluarForm(u, onSaved) {
       <datalist id="dlEPel">${App.pelanggan.map(p => `<option value="${esc(pelLabel(p))}">`).join('')}</datalist></label>
     <label>Sales<select id="eKSales"><option value="">— pilih sales —</option>${salesOpts}</select></label>
     ${demo ? '' : `<div class="form-grid" style="grid-template-columns:1fr 1fr">
+      <label>Jenis barang keluar<select id="eKSkema">${opsiSkema(u.skema || 'JUAL_PUTUS')}</select></label>
+      <label>Paket<select id="eKPaket">${opsiPaket(u.paket_id)}</select></label>
       <label>Tanggal penjualan<input type="date" id="eKJual" value="${esc(u.tgl_jual || u.tgl_keluar.slice(0, 10))}" max="${today()}"></label>
-      <label>Tanggal bayar<input type="date" id="eKBayar" value="${esc(u.tgl_bayar)}" max="${today()}"></label></div>
-      <p class="hint" style="margin-top:-8px">Kosongkan tanggal bayar bila belum dibayar.</p>`}
-    <label>No. referensi<input id="eKRef" value="${esc(u.referensi)}"></label>
+      <label>Tanggal tagihan awal<input type="date" id="eKTagihan" value="${esc(u.tgl_tagihan || '')}"></label></div>
+      <p class="hint" style="margin-top:-8px">Tanggal tagihan awal menjadi dasar pengingat jatuh tempo tiap bulan.</p>`}
+    <label>No. FAB<input id="eKRef" value="${esc(u.referensi)}"></label>
     <label>Keterangan<input id="eKKet" value="${esc(u.keterangan)}"></label>
-    <label>Alasan perubahan<input id="eKAl" placeholder="mis. salah pilih pelanggan"></label>
+    <label>Alasan perubahan<input id="eKAl" placeholder="mis. salah pilih paket"></label>
     <p class="form-error" id="eKErr"></p>
     <div class="modal-actions"><button class="btn" id="eKNo">Batal</button><button class="btn primary" id="eKYes">Simpan perubahan</button></div>`);
   $('#eKNo').onclick = closeModal;
@@ -985,7 +1055,8 @@ async function editKeluarForm(u, onSaved) {
     try {
       const saved = await API.call('editKeluar', {
         imei: u.imei, pelanggan_id: pel ? pel.id : '', sales_id: $('#eKSales').value,
-        tgl_jual: demo ? '' : $('#eKJual').value, tgl_bayar: demo ? '' : $('#eKBayar').value,
+        skema: demo ? '' : $('#eKSkema').value, paket_id: demo ? '' : $('#eKPaket').value,
+        tgl_jual: demo ? '' : $('#eKJual').value, tgl_tagihan: demo ? '' : $('#eKTagihan').value,
         referensi: $('#eKRef').value, keterangan: $('#eKKet').value, alasan: $('#eKAl').value
       });
       closeModal(); toast('Perubahan tersimpan');
@@ -994,90 +1065,114 @@ async function editKeluarForm(u, onSaved) {
   };
 }
 
+/** Modal isi tanggal tagihan awal untuk banyak unit. */
+function tagihanMassalForm(list, after) {
+  const sudah = list.filter(u => u.tgl_tagihan).length;
+  modal(`<h3>Isi tanggal tagihan awal · ${fmt(list.length)} unit</h3>
+    ${sudah ? `<p class="muted" style="margin:0">${sudah} unit sudah punya tanggal tagihan; akan diganti.</p>` : ''}
+    <label>Tanggal tagihan awal<input type="date" id="tmTgl" value="${today()}"></label>
+    <p class="form-error" id="tmErr"></p>
+    <div class="modal-actions"><button class="btn" id="tmNo">Batal</button><button class="btn primary" id="tmYes">Simpan</button></div>`);
+  $('#tmNo').onclick = closeModal;
+  $('#tmYes').onclick = async () => {
+    const tgl = $('#tmTgl').value, btn = $('#tmYes');
+    if (!tgl) { $('#tmErr').textContent = 'Isi tanggal.'; return; }
+    btn.disabled = true;
+    try {
+      const ims = list.map(u => u.imei);
+      for (let i = 0; i < ims.length; i += 100) {
+        btn.textContent = `Menyimpan… ${Math.min(i + 100, ims.length)}/${ims.length}`;
+        await API.call('tagihanMassal', { imeis: ims.slice(i, i + 100), tgl_tagihan: tgl });
+      }
+      list.forEach(u => { u.tgl_tagihan = tgl; });
+      closeModal(); toast(`Tanggal tagihan ${list.length} unit tersimpan`); after();
+    } catch (e) {
+      $('#tmErr').innerHTML = esc(e.message) + (e.errors && e.errors.length ? '<br>' + e.errors.slice(0, 5).map(esc).join('<br>') : '');
+      btn.disabled = false; btn.textContent = 'Simpan';
+    }
+  };
+}
+
 async function pagePenjualan(v) {
   const [units] = await Promise.all([API.call('stok', { status: 'KELUAR' }), ensurePelanggan()]);
   const pelById = {};
   App.pelanggan.forEach(p => { pelById[p.id] = p; });
-  const prep = u => {
-    u.kategori = kat(u);
-    if (u.kategori === 'JUAL' && !u.tgl_jual) u.tgl_jual = u.tgl_keluar.slice(0, 10);
-    u.tgl_ref = u.tgl_jual || u.tgl_keluar.slice(0, 10);
-    const p = pelById[u.pelanggan_id];
-    u.no_hp = p ? p.no_hp : '';
-    u.sales = salesNama(u.sales_id, '');
-    u.status_bayar = u.kategori === 'DEMO' ? '' : (u.tgl_bayar ? 'LUNAS' : 'BELUM BAYAR');
-    u.umur = u.status_bayar === 'BELUM BAYAR' ? umurHari(u.tgl_jual) : '';
-  };
-  units.forEach(prep);
+  units.forEach(u => prepKeluar(u, pelById));
   const pre = sessionStorage.getItem('vg_penjualan');
   sessionStorage.removeItem('vg_penjualan');
   const sel = new Set();
   let rows = [];
+  const pg = makePager('penjualan', () => draw());
   v.innerHTML = `
   <div class="card">
     <div class="toolbar filters">
-      <label>Tgl jual dari<input type="date" id="pjDari" value="${pre === 'BELUM' ? '' : today().slice(0, 8) + '01'}"></label>
+      <label>Tgl jual dari<input type="date" id="pjDari" value="${pre ? '' : today().slice(0, 8) + '01'}"></label>
       <label>Sampai<input type="date" id="pjSampai" value="${today()}"></label>
-      <label>Status bayar<select id="pjSt"><option value="">Semua</option><option value="BELUM BAYAR" ${pre === 'BELUM' ? 'selected' : ''}>Belum bayar</option><option value="LUNAS">Lunas</option></select></label>
-      <label>Jenis<select id="pjKat"><option value="JUAL">Penjualan</option><option value="DEMO">Demo dibawa sales</option><option value="">Semua</option></select></label>
+      <label>Jenis keluar<select id="pjSkema"><option value="JUAL">Jual putus + rental</option><option value="JUAL_PUTUS">Jual putus</option>
+        <option value="RENTAL">Rental</option><option value="DEMO">Demo dibawa sales</option><option value="">Semua</option></select></label>
+      <label>Paket<select id="pjPaket">${opsiPaket('', 'Semua paket').replace(/ \(nonaktif\)/g, '')}</select></label>
+      <label>Tagihan awal<select id="pjTg"><option value="">Semua</option><option value="KOSONG" ${pre === 'KOSONG' ? 'selected' : ''}>Belum diisi</option><option value="ISI">Sudah diisi</option></select></label>
       <label>Sales<select id="pjSales"><option value="">Semua sales</option>${App.sales.map(s => `<option value="${esc(s.id)}">${esc(s.nama)}</option>`).join('')}</select></label>
       ${isUtama() ? `<label>Cabang<select id="pjCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
-      <label class="grow">Cari<input id="pjQ" placeholder="IMEI, SN, pelanggan, No. HP, referensi…"></label>
+      <label class="grow">Cari<input id="pjQ" placeholder="IMEI, SN, pelanggan, No. HP, No. FAB…"></label>
       <button class="btn" id="pjExp">Ekspor Excel</button>
     </div>
   </div>
   <div class="stats" id="pjStats"></div>
   <div class="card">
-    <div class="bulkbar hidden" id="pjBulk"><span><b id="pjSelN">0</b> penjualan dipilih</span>
-      <span class="row"><button class="btn sm ghost" id="pjSelClr">Batal pilih</button><button class="btn sm primary" id="pjLunas">✓ Tandai lunas</button></span></div>
+    <div class="bulkbar hidden" id="pjBulk"><span><b id="pjSelN">0</b> unit dipilih</span>
+      <span class="row"><button class="btn sm ghost" id="pjSelClr">Batal pilih</button><button class="btn sm primary" id="pjTagih">Isi tgl tagihan awal</button></span></div>
     <div class="table-wrap"><table><thead><tr>
-      <th><input type="checkbox" id="pjAll" title="Pilih semua yang belum bayar"></th><th>Tgl jual</th><th>IMEI</th><th>SN</th><th>Model</th>
-      <th>Pelanggan</th><th>No. HP</th><th>Sales</th><th>Pembayaran</th><th>Referensi</th><th>Cabang</th><th class="act"></th></tr></thead>
+      <th><input type="checkbox" id="pjAll" title="Pilih semua"></th><th>Tgl jual</th><th>IMEI</th><th>SN</th>
+      <th>Pelanggan</th><th>No. HP</th><th>Jenis</th><th>Paket</th><th>Sales</th><th>Tagihan awal</th><th>Jatuh tempo berikut</th><th>No. FAB</th><th>Cabang</th><th class="act"></th></tr></thead>
       <tbody id="pjBody"></tbody></table></div>
-    <div class="summary"><span id="pjInfo"></span></div>
+    <div id="pjPager"></div>
   </div>`;
   const val = id => { const el = $('#' + id); return el ? el.value : ''; };
   const apply = () => {
-    const dari = val('pjDari'), sampai = val('pjSampai'), st = val('pjSt'), kt = val('pjKat'), sl = val('pjSales'), cab = val('pjCab');
+    const dari = val('pjDari'), sampai = val('pjSampai'), sk = val('pjSkema'), pk = val('pjPaket'), tg = val('pjTg'), sl = val('pjSales'), cab = val('pjCab');
     const q = $('#pjQ').value.trim().toUpperCase();
-    rows = units.filter(u => (!kt || u.kategori === kt) && (!st || u.status_bayar === st) &&
+    rows = units.filter(u =>
+      (!sk || (sk === 'JUAL' ? u.kategori === 'JUAL' : sk === 'DEMO' ? u.kategori === 'DEMO' : u.kategori === 'JUAL' && u.skema === sk)) &&
+      (!pk || u.paket_id === pk) && (!tg || (u.kategori === 'JUAL' && (tg === 'KOSONG' ? !u.tgl_tagihan : !!u.tgl_tagihan))) &&
       (!dari || u.tgl_ref >= dari) && (!sampai || u.tgl_ref <= sampai) && (!sl || u.sales_id === sl) && (!cab || u.cabang === cab) &&
-      (!q || [u.imei, u.sn, u.penerima, u.no_hp, u.referensi, u.sales].join(' ').toUpperCase().includes(q)))
+      (!q || [u.imei, u.sn, u.penerima, u.no_hp, u.referensi, u.sales, u.paket].join(' ').toUpperCase().includes(q)))
       .sort((a, b) => a.tgl_ref < b.tgl_ref ? 1 : -1);
     [...sel].forEach(im => { if (!rows.some(r => r.imei === im)) sel.delete(im); });
-    draw();
+    pg.reset(); draw();
   };
   const draw = () => {
     const jual = rows.filter(u => u.kategori === 'JUAL');
-    const belum = jual.filter(u => !u.tgl_bayar);
-    const lama = belum.filter(u => u.umur > 30);
     $('#pjStats').innerHTML = `
-      <div class="stat"><small>Unit ${val('pjKat') === 'DEMO' ? 'demo keluar' : 'terjual'} (sesuai filter)</small><b>${fmt(rows.length)}</b></div>
-      <div class="stat hi"><small>Belum bayar</small><b style="color:var(--bad)">${fmt(belum.length)}</b></div>
-      <div class="stat"><small>Lunas</small><b style="color:var(--ok)">${fmt(jual.length - belum.length)}</b></div>
-      <div class="stat"><small>Belum bayar &gt; 30 hari</small><b>${fmt(lama.length)}</b></div>`;
-    const shown = rows.slice(0, 500);
+      <div class="stat"><small>Unit (sesuai filter)</small><b>${fmt(rows.length)}</b></div>
+      <div class="stat"><small>Jual putus</small><b>${fmt(jual.filter(u => u.skema === 'JUAL_PUTUS').length)}</b></div>
+      <div class="stat"><small>Rental</small><b>${fmt(jual.filter(u => u.skema === 'RENTAL').length)}</b></div>
+      <div class="stat hi"><small>Tagihan awal belum diisi</small><b style="color:var(--bad)">${fmt(jual.filter(u => !u.tgl_tagihan).length)}</b></div>`;
+    const shown = pg.slice(rows);
     $('#pjBody').innerHTML = shown.length ? shown.map(u => `<tr class="${sel.has(u.imei) ? 'sel' : ''}">
       <td>${u.kategori === 'JUAL' ? `<input type="checkbox" data-sel="${esc(u.imei)}" ${sel.has(u.imei) ? 'checked' : ''}>` : ''}</td>
       <td class="mono">${esc(u.tgl_ref)}</td>
-      <td class="mono"><a href="#lacak" data-q="${esc(u.imei)}">${esc(u.imei)}</a></td><td class="mono">${esc(u.sn)}</td><td>${esc(u.model)}</td>
+      <td class="mono"><a href="#lacak" data-q="${esc(u.imei)}">${esc(u.imei)}</a></td><td class="mono">${esc(u.sn)}</td>
       <td>${esc(u.penerima)}</td>
-      <td class="mono">${u.no_hp ? `<a href="https://wa.me/62${esc(u.no_hp.slice(1))}" target="_blank" rel="noopener" title="WhatsApp">${esc(u.no_hp)}</a>` : ''}</td>
-      <td>${esc(u.sales)}</td>
-      <td class="nowrap">${u.kategori === 'DEMO' ? badge('DEMO') : bayarBadge(u)}</td>
+      <td class="mono">${u.no_hp ? `<a href="${waLink(u.no_hp)}" target="_blank" rel="noopener" title="WhatsApp">${esc(u.no_hp)}</a>` : ''}</td>
+      <td>${u.kategori === 'DEMO' ? badge('DEMO') : `<span class="badge b-${u.skema}">${esc(u.jenis_keluar)}</span>`}</td>
+      <td>${esc(u.paket)}</td><td>${esc(u.sales)}</td>
+      <td class="mono">${esc(u.tgl_tagihan || '')}</td>
+      <td class="nowrap">${u.kategori === 'JUAL' ? dueBadge(u.tgl_tagihan) : ''}</td>
       <td>${esc(u.referensi)}</td><td>${esc(cabNama(u.cabang))}</td>
       <td class="act"><button class="btn sm" data-edit="${esc(u.imei)}">Edit</button></td></tr>`).join('')
-      : '<tr><td colspan="12" class="empty">Tidak ada data</td></tr>';
-    $('#pjInfo').innerHTML = `<b>${fmt(rows.length)}</b> unit${rows.length > 500 ? ' (500 teratas ditampilkan; ekspor untuk semua)' : ''}`;
+      : '<tr><td colspan="14" class="empty">Tidak ada data</td></tr>';
+    $('#pjPager').innerHTML = pg.html(rows.length, 'unit');
+    pg.bind($('#pjPager'), rows.length);
     bulk();
   };
   const bulk = () => {
     $('#pjSelN').textContent = sel.size;
     $('#pjBulk').classList.toggle('hidden', !sel.size);
-    const cand = rows.slice(0, 500).filter(u => u.kategori === 'JUAL' && !u.tgl_bayar);
+    const cand = pg.slice(rows).filter(u => u.kategori === 'JUAL');
     $('#pjAll').checked = cand.length > 0 && cand.every(u => sel.has(u.imei));
   };
-  ['pjDari', 'pjSampai', 'pjSt', 'pjKat', 'pjSales', 'pjCab'].forEach(id => { const el = $('#' + id); if (el) el.onchange = apply; });
+  ['pjDari', 'pjSampai', 'pjSkema', 'pjPaket', 'pjTg', 'pjSales', 'pjCab'].forEach(id => { const el = $('#' + id); if (el) el.onchange = apply; });
   $('#pjQ').oninput = apply;
   $('#pjBody').onclick = e => {
     const c = e.target.closest('[data-sel]');
@@ -1087,44 +1182,171 @@ async function pagePenjualan(v) {
     const ed = e.target.closest('[data-edit]');
     if (ed) {
       const u = units.find(x => x.imei === ed.dataset.edit);
-      editKeluarForm(u, s => { Object.assign(u, s); prep(u); apply(); });
+      editKeluarForm(u, s => { Object.assign(u, s); prepKeluar(u, pelById); apply(); });
     }
   };
   $('#pjAll').onchange = e => {
-    rows.slice(0, 500).filter(u => u.kategori === 'JUAL' && !u.tgl_bayar).forEach(u => { e.target.checked ? sel.add(u.imei) : sel.delete(u.imei); });
+    pg.slice(rows).filter(u => u.kategori === 'JUAL').forEach(u => { e.target.checked ? sel.add(u.imei) : sel.delete(u.imei); });
     draw();
   };
   $('#pjSelClr').onclick = () => { sel.clear(); draw(); };
-  $('#pjLunas').onclick = () => {
+  $('#pjTagih').onclick = () => {
     const list = units.filter(u => sel.has(u.imei));
-    const sudah = list.filter(u => u.tgl_bayar).length;
-    modal(`<h3>Tandai lunas ${fmt(list.length)} penjualan</h3>
-      ${sudah ? `<p class="muted" style="margin:0">${sudah} di antaranya sudah lunas; tanggal bayarnya akan diganti.</p>` : ''}
-      <label>Tanggal bayar<input type="date" id="lbTgl" value="${today()}" max="${today()}"></label>
-      <p class="form-error" id="lbErr"></p>
-      <div class="modal-actions"><button class="btn" id="lbNo">Batal</button><button class="btn primary" id="lbYes">Simpan</button></div>`);
-    $('#lbNo').onclick = closeModal;
-    $('#lbYes').onclick = async () => {
-      const tgl = $('#lbTgl').value, btn = $('#lbYes');
-      btn.disabled = true;
-      try {
-        const ims = list.map(u => u.imei);
-        for (let i = 0; i < ims.length; i += 100) {
-          btn.textContent = `Menyimpan… ${Math.min(i + 100, ims.length)}/${ims.length}`;
-          await API.call('bayarMassal', { imeis: ims.slice(i, i + 100), tgl_bayar: tgl });
-          ims.slice(i, i + 100).forEach(im => { const u = units.find(x => x.imei === im); u.tgl_bayar = tgl; prep(u); });
-        }
-        closeModal(); sel.clear(); toast(`${list.length} penjualan ditandai lunas`); apply();
-      } catch (e) { $('#lbErr').innerHTML = esc(e.message) + (e.errors && e.errors.length ? '<br>' + e.errors.slice(0, 5).map(esc).join('<br>') : ''); btn.disabled = false; btn.textContent = 'Simpan'; }
-    };
+    tagihanMassalForm(list, () => { list.forEach(u => prepKeluar(u, pelById)); sel.clear(); apply(); });
   };
-  $('#pjExp').onclick = () => exportExcel('penjualan-' + today(), [
-    ['tgl_ref', 'Tgl Jual', 12], ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 22], ['kategori', 'Kategori', 9],
-    ['pelanggan_id', 'ID Pelanggan', 12], ['penerima', 'Pelanggan', 24], ['no_hp', 'No. HP', 15], ['sales', 'Sales', 18],
-    ['status_bayar', 'Status Bayar', 13], ['tgl_bayar', 'Tgl Bayar', 12], ['umur', 'Umur Belum Bayar (hari)', 10],
-    ['referensi', 'Referensi', 16], ['cabang', 'Cabang', 10], ['keterangan', 'Keterangan', 24]
+  $('#pjExp').onclick = () => exportExcel('penjualan-rental-' + today(), [
+    ['tgl_ref', 'Tgl Jual', 12], ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 20], ['jenis_keluar', 'Jenis Keluar', 12],
+    ['paket', 'Paket', 20], ['pelanggan_id', 'ID Pelanggan', 12], ['penerima', 'Pelanggan', 24], ['no_hp', 'No. HP', 15], ['sales', 'Sales', 18],
+    ['tgl_tagihan', 'Tgl Tagihan Awal', 14], ['jatuh_tempo', 'Jatuh Tempo Berikut', 14], ['sisa_hari', 'Sisa Hari', 9],
+    ['referensi', 'No. FAB', 16], ['cabang', 'Cabang', 10], ['keterangan', 'Keterangan', 24]
   ], rows);
   apply();
+}
+
+/* ---------------- Jatuh tempo (pengingat tagihan) ---------------- */
+const TPL_DEFAULT = 'Halo Bapak/Ibu {nama}, kami dari VITEG mengingatkan bahwa tagihan internet MyRepublic paket {paket} Anda akan jatuh tempo pada {tanggal}. Mohon lakukan pembayaran sebelum tanggal tersebut agar layanan tetap aktif. Terima kasih.';
+const isiTemplate = (tpl, u) => tpl.replace(/\{nama\}/g, u.penerima || '').replace(/\{paket\}/g, u.paket || '-')
+  .replace(/\{tanggal\}/g, tglIndo(u.jatuh_tempo)).replace(/\{imei\}/g, u.imei).replace(/\{fab\}/g, u.referensi || '-')
+  .replace(/\{sales\}/g, u.sales || '');
+
+async function pageJatuhTempo(v) {
+  const [units] = await Promise.all([API.call('stok', { status: 'KELUAR' }), ensurePelanggan()]);
+  const pelById = {};
+  App.pelanggan.forEach(p => { pelById[p.id] = p; });
+  const all = units.filter(u => kat(u) === 'JUAL').map(u => prepKeluar(u, pelById));
+  const kosong = all.filter(u => !u.tgl_tagihan).length;
+  let tpl;
+  try { tpl = localStorage.getItem('vg_tpl_tagihan') || TPL_DEFAULT; } catch (e) { tpl = TPL_DEFAULT; }
+  let rows = [];
+  const pg = makePager('jatuhtempo', () => draw());
+  v.innerHTML = `
+  <div class="card">
+    <div class="toolbar filters">
+      <label>Jatuh tempo dalam<select id="jtHari"><option value="0">Hari ini</option><option value="3">3 hari</option>
+        <option value="7" selected>7 hari</option><option value="14">14 hari</option><option value="31">1 bulan</option></select></label>
+      <label>Jenis keluar<select id="jtSkema"><option value="">Semua</option><option value="JUAL_PUTUS">Jual putus</option><option value="RENTAL">Rental</option></select></label>
+      <label>Paket<select id="jtPaket">${opsiPaket('', 'Semua paket').replace(/ \(nonaktif\)/g, '')}</select></label>
+      <label>Sales<select id="jtSales"><option value="">Semua sales</option>${App.sales.map(s => `<option value="${esc(s.id)}">${esc(s.nama)}</option>`).join('')}</select></label>
+      ${isUtama() ? `<label>Cabang<select id="jtCab">${opsiCabang('', 'Semua cabang', false)}</select></label>` : ''}
+      <label class="grow">Cari<input id="jtQ" placeholder="Pelanggan, No. HP, IMEI, No. FAB…"></label>
+      <button class="btn" id="jtTpl">✎ Template pesan</button>
+      <button class="btn" id="jtExp">Ekspor Excel</button>
+    </div>
+    ${kosong ? `<p class="hint" style="margin:0"><b>${fmt(kosong)}</b> unit terjual/rental belum punya tanggal tagihan awal sehingga tidak masuk pengingat.
+      <a href="#penjualan" onclick="sessionStorage.setItem('vg_penjualan','KOSONG')">Lengkapi di Data Penjualan →</a></p>` : ''}
+  </div>
+  <div class="stats" id="jtStats"></div>
+  <div class="card">
+    <div class="table-wrap"><table><thead><tr><th>Jatuh tempo</th><th>Pelanggan</th><th>No. HP</th><th>Paket</th><th>Jenis</th>
+      <th>IMEI</th><th>Tagihan awal</th><th>No. FAB</th><th>Sales</th><th>Cabang</th><th class="act">Ingatkan</th></tr></thead>
+      <tbody id="jtBody"></tbody></table></div>
+    <div id="jtPager"></div>
+  </div>`;
+  const val = id => { const el = $('#' + id); return el ? el.value : ''; };
+  const apply = () => {
+    const n = +val('jtHari'), sk = val('jtSkema'), pk = val('jtPaket'), sl = val('jtSales'), cab = val('jtCab');
+    const q = $('#jtQ').value.trim().toUpperCase();
+    rows = all.filter(u => u.jatuh_tempo && u.sisa_hari <= n && (!sk || u.skema === sk) && (!pk || u.paket_id === pk) &&
+      (!sl || u.sales_id === sl) && (!cab || u.cabang === cab) &&
+      (!q || [u.penerima, u.no_hp, u.imei, u.referensi, u.paket].join(' ').toUpperCase().includes(q)))
+      .sort((a, b) => a.sisa_hari - b.sisa_hari || (a.penerima < b.penerima ? -1 : 1));
+    pg.reset(); draw();
+  };
+  const draw = () => {
+    const cnt = k => rows.filter(u => k === 0 ? u.sisa_hari === 0 : k === 3 ? u.sisa_hari >= 1 && u.sisa_hari <= 3 : u.sisa_hari > 3).length;
+    $('#jtStats').innerHTML = `
+      <div class="stat hi"><small>Jatuh tempo hari ini</small><b style="color:var(--bad)">${fmt(cnt(0))}</b></div>
+      <div class="stat"><small>1–3 hari lagi</small><b style="color:#b45309">${fmt(cnt(3))}</b></div>
+      <div class="stat"><small>Lebih dari 3 hari</small><b>${fmt(cnt(9))}</b></div>
+      <div class="stat"><small>Belum ada No. HP</small><b>${fmt(rows.filter(u => !u.no_hp).length)}</b></div>`;
+    const shown = pg.slice(rows);
+    $('#jtBody').innerHTML = shown.length ? shown.map(u => `<tr>
+      <td class="nowrap">${dueBadge(u.tgl_tagihan)}</td>
+      <td><strong>${esc(u.penerima)}</strong></td>
+      <td class="mono">${esc(u.no_hp || '-')}</td>
+      <td>${esc(u.paket)}</td><td><span class="badge b-${u.skema}">${esc(u.jenis_keluar)}</span></td>
+      <td class="mono"><a href="#lacak" data-q="${esc(u.imei)}">${esc(u.imei)}</a></td>
+      <td class="mono">${esc(u.tgl_tagihan)}</td><td>${esc(u.referensi)}</td><td>${esc(u.sales)}</td><td>${esc(cabNama(u.cabang))}</td>
+      <td class="act">${u.no_hp ? `<a class="btn sm wa" href="${waLink(u.no_hp, isiTemplate(tpl, u))}" target="_blank" rel="noopener">WhatsApp</a>`
+        : `<button class="btn sm" data-pel="${esc(u.pelanggan_id)}" title="Lengkapi No. HP pelanggan">+ No. HP</button>`}</td></tr>`).join('')
+      : '<tr><td colspan="11" class="empty">Tidak ada tagihan jatuh tempo pada rentang ini 🎉</td></tr>';
+    $('#jtPager').innerHTML = pg.html(rows.length, 'tagihan');
+    pg.bind($('#jtPager'), rows.length);
+  };
+  ['jtHari', 'jtSkema', 'jtPaket', 'jtSales', 'jtCab'].forEach(id => { const el = $('#' + id); if (el) el.onchange = apply; });
+  $('#jtQ').oninput = apply;
+  $('#jtBody').onclick = e => {
+    const a = e.target.closest('[data-q]');
+    if (a) sessionStorage.setItem('vg_lacak', a.dataset.q);
+    const b = e.target.closest('[data-pel]');
+    if (b) {
+      const p = App.pelanggan.find(x => x.id === b.dataset.pel);
+      if (p) pelangganForm(p, s => { Object.assign(p, s); all.forEach(u => prepKeluar(u, pelById)); draw(); });
+    }
+  };
+  $('#jtTpl').onclick = () => {
+    modal(`<h3>Template pesan WhatsApp</h3>
+      <p class="hint" style="margin:0">Kode yang bisa dipakai: <code>{nama}</code> <code>{paket}</code> <code>{tanggal}</code> <code>{imei}</code> <code>{fab}</code> <code>{sales}</code></p>
+      <textarea id="tplTx" style="min-height:150px;font-family:inherit;font-size:14px">${esc(tpl)}</textarea>
+      <div class="modal-actions"><button class="btn ghost" id="tplDef">Kembalikan bawaan</button><span class="spacer"></span>
+        <button class="btn" id="tplNo">Batal</button><button class="btn primary" id="tplYes">Simpan</button></div>`);
+    $('#tplNo').onclick = closeModal;
+    $('#tplDef').onclick = () => { $('#tplTx').value = TPL_DEFAULT; };
+    $('#tplYes').onclick = () => {
+      tpl = $('#tplTx').value.trim() || TPL_DEFAULT;
+      try { localStorage.setItem('vg_tpl_tagihan', tpl); } catch (e) {}
+      closeModal(); toast('Template tersimpan'); draw();
+    };
+  };
+  $('#jtExp').onclick = () => {
+    rows.forEach(u => { u.pesan = isiTemplate(tpl, u); });
+    exportExcel('jatuh-tempo-' + today(), [
+      ['jatuh_tempo', 'Jatuh Tempo', 12], ['sisa_hari', 'Sisa Hari', 9], ['penerima', 'Pelanggan', 24], ['no_hp', 'No. HP', 15],
+      ['paket', 'Paket', 20], ['jenis_keluar', 'Jenis', 11], ['imei', 'IMEI', 18], ['tgl_tagihan', 'Tagihan Awal', 12],
+      ['referensi', 'No. FAB', 16], ['sales', 'Sales', 18], ['cabang', 'Cabang', 10], ['pesan', 'Pesan Pengingat', 60]
+    ], rows);
+  };
+  apply();
+  setNavBadge('jatuhtempo', all.filter(u => u.jatuh_tempo && u.sisa_hari <= 7).length);
+}
+
+/* ---------------- Paket ---------------- */
+async function pagePaket(v) {
+  App.paket = await API.call('paket');
+  const rp = n => n ? 'Rp ' + fmt(n) : '';
+  v.innerHTML = `<div class="card"><h3>Daftar paket ${isUtama() ? '<button class="btn primary sm" id="pkNew">+ Tambah paket</button>' : ''}</h3>
+    ${isUtama() ? '' : '<p class="hint" style="margin:-6px 0 12px">Daftar paket dikelola oleh admin utama.</p>'}
+    <div class="table-wrap"><table><thead><tr><th>ID</th><th>Nama paket</th><th>Kecepatan</th><th class="num">Harga / bulan</th><th>Keterangan</th><th>Status</th>${isUtama() ? '<th></th>' : ''}</tr></thead>
+    <tbody>${App.paket.length ? App.paket.map((p, i) => `<tr><td class="mono">${esc(p.id)}</td><td><strong>${esc(p.nama)}</strong></td>
+      <td>${esc(p.kecepatan)}</td><td class="num">${rp(p.harga)}</td><td>${esc(p.keterangan)}</td>
+      <td>${p.aktif === '1' ? '<span class="badge b-on">AKTIF</span>' : '<span class="badge b-off">NONAKTIF</span>'}</td>
+      ${isUtama() ? `<td><button class="btn sm" data-i="${i}">Ubah</button></td>` : ''}</tr>`).join('')
+      : `<tr><td colspan="7" class="empty">Belum ada paket${isUtama() ? ' — klik + Tambah paket' : ''}</td></tr>`}</tbody></table></div></div>`;
+  if (!isUtama()) return;
+  const form = p => {
+    const baru = !p;
+    p = p || { id: '', nama: '', kecepatan: '', harga: '', keterangan: '', aktif: '1' };
+    modal(`<h3>${baru ? 'Tambah' : 'Ubah'} paket</h3>
+      <label>Nama paket<input id="pkNama" value="${esc(p.nama)}" placeholder="mis. MyRepublic Value 30 Mbps"></label>
+      <div class="form-grid" style="grid-template-columns:1fr 1fr">
+        <label>Kecepatan<input id="pkSpeed" value="${esc(p.kecepatan)}" placeholder="mis. 30 Mbps"></label>
+        <label>Harga / bulan (Rp)<input id="pkHarga" value="${esc(p.harga)}" inputmode="numeric" placeholder="mis. 250000"></label></div>
+      <label>Keterangan<input id="pkKet" value="${esc(p.keterangan)}"></label>
+      <label>Status<select id="pkAkt"><option value="1">Aktif</option><option value="0" ${p.aktif === '0' ? 'selected' : ''}>Nonaktif</option></select></label>
+      <p class="hint" style="margin-top:-6px">Paket nonaktif tidak bisa dipilih untuk penjualan baru, tetapi data lama tetap tersimpan.</p>
+      <p class="form-error" id="pkErr"></p>
+      <div class="modal-actions"><button class="btn" id="pkNo">Batal</button><button class="btn primary" id="pkYes">Simpan</button></div>`);
+    $('#pkNo').onclick = closeModal;
+    $('#pkYes').onclick = async () => {
+      try {
+        App.paket = await API.call('simpanPaket', { id: p.id, nama: $('#pkNama').value, kecepatan: $('#pkSpeed').value,
+          harga: $('#pkHarga').value, keterangan: $('#pkKet').value, aktif: $('#pkAkt').value });
+        closeModal(); toast('Paket tersimpan'); pagePaket(v);
+      } catch (e) { $('#pkErr').textContent = e.message; }
+    };
+  };
+  $('#pkNew').onclick = () => form(null);
+  $$('[data-i]', v).forEach(b => b.onclick = () => form(App.paket[+b.dataset.i]));
 }
 
 /* ---------------- Lacak unit ---------------- */
@@ -1156,10 +1378,13 @@ async function pageLacak(v) {
             <div><small>Tgl masuk</small>${esc(u.tgl_masuk)}</div>
             ${u.status === 'KELUAR' ? `<div><small>Tgl keluar (input)</small>${esc(u.tgl_keluar)}</div>
               ${kat(u) === 'JUAL' ? `<div><small>Tgl penjualan</small>${esc(u.tgl_jual || u.tgl_keluar.slice(0, 10))}</div>
-              <div><small>Pembayaran</small>${bayarBadge(Object.assign({}, u, { tgl_jual: u.tgl_jual || u.tgl_keluar.slice(0, 10) }))}</div>` : ''}
+              <div><small>Jenis keluar</small><span class="badge b-${esc(u.skema || 'JUAL_PUTUS')}">${esc(skemaNama(u.skema || 'JUAL_PUTUS'))}</span></div>
+              <div><small>Paket</small>${esc(paketNama(u.paket_id, '-'))}</div>
+              <div><small>Tagihan awal</small>${esc(u.tgl_tagihan || '-')}</div>
+              <div><small>Jatuh tempo berikut</small>${dueBadge(u.tgl_tagihan)}</div>` : ''}
               <div><small>${r.pelanggan ? 'Pelanggan' : 'Penerima'}</small>${esc(u.penerima)}</div>
               <div><small>Sales</small>${esc(salesNama(u.sales_id))}</div>` : ''}
-            <div><small>Referensi</small>${esc(u.referensi || '-')}</div>
+            <div><small>${u.status === 'KELUAR' ? 'No. FAB' : 'Referensi'}</small>${esc(u.referensi || '-')}</div>
           </div>
           ${r.pelanggan ? `<div class="pel-box">
             <div><small>Pelanggan</small><strong>${esc(r.pelanggan.nama)}</strong> <span class="muted mono">${esc(r.pelanggan.id)}</span></div>
@@ -1788,12 +2013,13 @@ async function pageLaporan(v) {
           ${data.sisa.length > 500 ? '<p class="hint">500 baris pertama ditampilkan; ekspor untuk semua.</p>' : ''}`;
       } else {
         const L = tab === 'terjual' ? data.terjual : data.demo;
-        $('#lpList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Tgl input</th><th>Tgl jual</th><th>IMEI</th><th>SN</th><th>Model</th><th>Pelanggan</th><th>Sales</th><th>Pembayaran</th><th>Cabang</th><th>Referensi</th></tr></thead>
+        $('#lpList').innerHTML = `<div class="table-wrap"><table><thead><tr><th>Tgl input</th><th>Tgl jual</th><th>IMEI</th><th>SN</th><th>Model</th><th>Pelanggan</th><th>Sales</th><th>Jenis</th><th>Paket</th><th>Tagihan awal</th><th>Cabang</th><th>No. FAB</th></tr></thead>
           <tbody>${L.length ? L.slice(0, 500).map(t => `<tr><td class="mono">${esc(t.waktu.slice(0, 16))}</td><td class="mono">${esc(t.tgl_jual || '')}</td><td class="mono">${esc(t.imei)}</td><td class="mono">${esc(t.sn)}</td>
             <td>${esc(t.model)}</td><td>${esc(t.pelanggan)}</td><td>${esc(t.sales)}</td>
-            <td class="nowrap">${t.jenis === 'KELUAR' ? (t.tgl_bayar ? `<span class="badge b-LUNAS">LUNAS</span> <span class="mono">${esc(t.tgl_bayar)}</span>` : '<span class="badge b-BELUM">BELUM BAYAR</span>') : ''}</td>
+            <td>${t.skema ? `<span class="badge b-${esc(t.skema)}">${esc(skemaNama(t.skema))}</span>` : ''}</td><td>${esc(t.paket || '')}</td>
+            <td class="mono">${esc(t.tgl_tagihan || '')}</td>
             <td>${esc(cabNama(t.cabang))}</td><td>${esc(t.referensi)}</td></tr>`).join('')
-            : '<tr><td colspan="10" class="empty">Kosong</td></tr>'}</tbody></table></div>`;
+            : '<tr><td colspan="12" class="empty">Kosong</td></tr>'}</tbody></table></div>`;
       }
     };
     $$('#lpTabs button').forEach(b => b.onclick = () => { tab = b.dataset.t; $$('#lpTabs button').forEach(x => x.classList.toggle('on', x === b)); drawList(); });
@@ -1803,9 +2029,9 @@ async function pageLaporan(v) {
   $('#lpGo').onclick = load;
   $('#lpExp').onclick = () => {
     if (!data) return;
-    [data.terjual, data.demo].forEach(L => L.forEach(t => { t.status_bayar = t.jenis === 'KELUAR' ? (t.tgl_bayar ? 'LUNAS' : 'BELUM BAYAR') : ''; }));
-    const trxCols = [['waktu', 'Tgl Input', 19], ['tgl_jual', 'Tgl Jual', 12], ['status_bayar', 'Status Bayar', 13], ['tgl_bayar', 'Tgl Bayar', 12], ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 22], ['cabang', 'Cabang', 10],
-      ['pelanggan', 'Pelanggan', 24], ['no_ktp', 'No. KTP', 19], ['sales', 'Sales', 18], ['referensi', 'Referensi', 16]];
+    [data.terjual, data.demo].forEach(L => L.forEach(t => { t.jenis_keluar = skemaNama(t.skema); }));
+    const trxCols = [['waktu', 'Tgl Input', 19], ['tgl_jual', 'Tgl Jual', 12], ['jenis_keluar', 'Jenis Keluar', 12], ['paket', 'Paket', 20], ['tgl_tagihan', 'Tgl Tagihan Awal', 14], ['imei', 'IMEI', 18], ['sn', 'SN', 18], ['model', 'Model', 22], ['cabang', 'Cabang', 10],
+      ['pelanggan', 'Pelanggan', 24], ['no_ktp', 'No. KTP', 19], ['sales', 'Sales', 18], ['referensi', 'No. FAB', 16]];
     exportExcelMulti(`laporan-${data.bulan}-${data.cabang || 'semua'}`, [
       { name: 'Ringkasan', cols: [['model', 'Model', 22], ['kategori', 'Kategori', 9]].concat(COLS.map(c => [c[0], c[1], 12])),
         rows: data.ringkasan, numeric: true },
@@ -1961,6 +2187,7 @@ const PAGES = {
   dashboard: pageDashboard, masuk: pageMasuk, keluar: pageKeluar, mutasi: pageMutasi,
   stok: pageStok, riwayat: pageRiwayat, lacak: pageLacak, pelanggan: pagePelanggan, sales: pageSales,
   opname: pageOpname, laporan: pageLaporan, cocok: pageCocok, penjualan: pagePenjualan,
+  jatuhtempo: pageJatuhTempo, paket: pagePaket,
   cabang: pageCabang, pengguna: pagePengguna, password: pagePassword
 };
 
